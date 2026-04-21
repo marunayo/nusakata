@@ -1,11 +1,13 @@
 import { callOpenRouter } from "@/lib/openrouter";
 import { GraphIntent } from "@/types/graphrag";
 
-type GenerateDynamicCypherArgs = {
+type RefineCypherArgs = {
   intent: GraphIntent;
   question: string;
+  previousCypher: string;
   word: string | null;
   language: string | null;
+  failureReason: string;
 };
 
 function extractCypher(text: string): string {
@@ -16,32 +18,33 @@ function extractCypher(text: string): string {
 }
 
 /**
- * Tahap: Dynamic Cypher Generation
- * Peran: Membuat kandidat query Cypher secara dinamis dengan bantuan LLM.
- * Input: intent, pertanyaan user, kata target, dan bahasa target.
- * Output: query Cypher kandidat yang akan dicoba lebih dulu.
+ * Tahap: Query Refinement
+ * Peran: Meminta model memperbaiki query Cypher yang gagal atau kosong.
+ * Input: query sebelumnya, alasan kegagalan, intent, dan entity.
+ * Output: query Cypher revisi yang siap dicoba kembali.
  *
  * Penjelasan:
- * Tahap ini adalah langkah awal menuju text-to-Cypher yang lebih dinamis.
- * Sistem tetap memakai intent sebagai guardrail, tetapi query tidak langsung
- * diambil dari template. Model diberi konteks schema dan diminta membuat query
- * sesuai intent yang sudah dipahami sebelumnya.
+ * Tahap ini membuat sistem lebih agentic.
+ * Jika query awal tidak berhasil, model diberi konteks singkat
+ * tentang masalahnya, lalu diminta menyusun query yang lebih baik.
  */
-export async function generateDynamicCypher({
+export async function refineCypher({
   intent,
   question,
+  previousCypher,
   word,
   language,
-}: GenerateDynamicCypherArgs): Promise<string> {
+  failureReason,
+}: RefineCypherArgs): Promise<string> {
   const systemPrompt = `
-You are a Cypher generator for a Neo4j-based Indonesian etymology application.
+You are refining a Cypher query for a Neo4j-based Indonesian etymology system.
 
-Return ONLY one valid Cypher query.
+Return ONLY one corrected Cypher query.
 Do not explain anything.
-Do not return markdown unless absolutely necessary.
+Do not use markdown unless absolutely necessary.
 Do not add commentary before or after the query.
 
-Graph schema:
+Schema:
 - (:Word { lemma, meaning })
 - (:Language { name, family })
 - (:RootForm { form, gloss })
@@ -49,14 +52,6 @@ Graph schema:
 Relationships:
 - (:Word)-[:ORIGIN_LANGUAGE]->(:Language)
 - (:Word)-[:DERIVED_FROM]->(:RootForm)
-
-Intent meanings:
-- origin_of_word:
-  find the word, its root form if available, and its origin language
-- words_by_language:
-  find all words from a specific language, and root form if available
-- root_of_word:
-  find the root form and gloss of a word
 
 Preferred return fields:
 - origin_of_word -> word, root_form, origin_language
@@ -67,15 +62,15 @@ Use parameters if relevant:
 - $word
 - $language
 
-Keep the query simple and executable in Neo4j.
-Avoid unsupported labels or relationships.
+Keep the query simple and valid for Neo4j.
+Fix the query based on the failure reason.
 `.trim();
 
   const userPrompt = `
 Question:
 ${question}
 
-Detected intent:
+Intent:
 ${intent}
 
 Detected word:
@@ -84,7 +79,13 @@ ${word ?? "null"}
 Detected language:
 ${language ?? "null"}
 
-Generate the Cypher query now.
+Previous Cypher:
+${previousCypher}
+
+Failure reason:
+${failureReason}
+
+Please provide a corrected Cypher query now.
 `.trim();
 
   const content = await callOpenRouter([

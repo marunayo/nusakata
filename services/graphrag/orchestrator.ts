@@ -6,10 +6,17 @@ import { retryQueryWithFallback } from "@/services/graphrag/retryWithFallback";
 import { buildNaturalAnswer } from "@/services/graphrag/generateAnswer";
 import { buildGraphPayload } from "@/services/graphrag/buildGraph";
 import { generateDynamicCypher } from "@/services/graphrag/generateDynamicCypher";
+import { refineCypher } from "@/services/graphrag/refineCypher";
 import { GraphIntent } from "@/types/graphrag";
 
 const KNOWN_WORDS = ["kabar", "kursi", "kantor", "gereja", "agama"];
 const KNOWN_LANGUAGES = ["Arab", "Belanda", "Portugis", "Sanskerta"];
+
+// Mode demo untuk pengujian refinement loop.
+// - "off"   : sistem berjalan normal
+// - "empty" : query dinamis awal sengaja dibuat menghasilkan 0 record
+// - "error" : query dinamis awal sengaja dibuat syntax error
+const DEMO_MODE: "off" | "empty" | "error" = "off";
 
 function detectWordFromQuestion(question: string): string | null {
   const normalized = question.toLowerCase();
@@ -75,6 +82,19 @@ function detectIntentRuleBased(question: string): GraphIntent {
  * Peran: Mengatur urutan seluruh proses GraphRAG dari awal sampai akhir.
  * Input: Pertanyaan user dalam bentuk string.
  * Output: Objek hasil GraphRAG yang siap dikirim ke frontend.
+ *
+ * Penjelasan:
+ * File ini adalah inti alur sistem.
+ * Semua tahap dipanggil dari sini secara berurutan, yaitu:
+ * 1. memahami intent user,
+ * 2. menormalkan entity,
+ * 3. membangkitkan query dinamis,
+ * 4. menjalankan query,
+ * 5. memperbaiki query bila perlu,
+ * 6. fallback ke template,
+ * 7. fallback entity,
+ * 8. membentuk jawaban,
+ * 9. membentuk graph.
  */
 export async function runGraphRag(question: string) {
   const logs: string[] = [];
@@ -87,6 +107,8 @@ export async function runGraphRag(question: string) {
   let detectedLanguage: string | null = null;
 
   // Tahap 1: memahami maksud pertanyaan user.
+  // Sistem mencoba memakai OpenRouter terlebih dahulu agar lebih fleksibel
+  // terhadap variasi bahasa alami.
   try {
     const parsed = await parseIntentFromQuestion(question);
     intent = parsed.intent;
@@ -97,6 +119,8 @@ export async function runGraphRag(question: string) {
   } catch (error) {
     console.error("Intent parsing failed:", error);
 
+    // Jika parsing semantik gagal, sistem memakai fallback rule-based
+    // agar aplikasi tetap bisa merespons.
     intent = detectIntentRuleBased(question);
     detectedWord = detectWordFromQuestion(question);
     detectedLanguage = detectLanguageFromQuestion(question);
@@ -109,7 +133,10 @@ export async function runGraphRag(question: string) {
   logs.push(`Detected language: ${detectedLanguage ?? "none"}`);
 
   // Tahap 2: normalisasi entity.
+  // Di sini sistem merapikan kata/bahasa yang terdeteksi,
+  // termasuk perbedaan huruf besar-kecil dan typo ringan.
   const normalized = normalizeDetectedEntities(detectedWord, detectedLanguage);
+
   detectedWord = normalized.word;
   detectedLanguage = normalized.language;
   logs.push(...normalized.logs);
@@ -133,7 +160,7 @@ export async function runGraphRag(question: string) {
     };
   }
 
-  // Tahap 3: siapkan query template sebagai fallback.
+  // Tahap 3: menyiapkan query template sebagai fallback aman.
   const templateCypher = selectQueryTemplate(intent);
   let cypher = templateCypher;
 
@@ -141,7 +168,8 @@ export async function runGraphRag(question: string) {
   if (detectedWord) params.word = detectedWord;
   if (detectedLanguage) params.language = detectedLanguage;
 
-  // Tahap 4: coba bangkitkan query dinamis dengan LLM.
+  // Tahap 4: mencoba membangkitkan query dinamis dengan bantuan LLM.
+  // Jika tahap ini gagal, sistem kembali ke template query.
   try {
     cypher = await generateDynamicCypher({
       intent,
@@ -159,22 +187,104 @@ export async function runGraphRag(question: string) {
 
   logs.push(`Cypher prepared for intent: ${intent}`);
 
-  // Tahap 5: eksekusi query.
+  // Mode demo untuk memaksa sistem masuk ke jalur refinement.
+  if (DEMO_MODE === "empty") {
+    cypher = `
+      MATCH (x:DoesNotExist)
+      RETURN x
+    `.trim();
+
+    logs.push("Demo mode active: forced empty-result dynamic query");
+  }
+
+  if (DEMO_MODE === "error") {
+    cypher = `MATCH (w:Word RETURN w`;
+    logs.push("Demo mode active: forced malformed dynamic query");
+  }
+
+  // Tahap 5: eksekusi query dinamis atau template.
   let execution;
+  const usedDynamicQuery = cypher !== templateCypher;
+
   try {
     execution = await executeGraphQuery(cypher, params);
     logs.push(`Neo4j query executed, records: ${execution.records.length}`);
+
+    // Jika query dinamis tidak error tetapi hasilnya kosong,
+    // sistem mencoba memperbaiki query satu kali sebelum fallback.
+    if (usedDynamicQuery && execution.records.length === 0) {
+      logs.push("Dynamic query returned no records, starting refinement step");
+
+      try {
+        const refinedCypher = await refineCypher({
+          intent,
+          question,
+          previousCypher: cypher,
+          word: detectedWord,
+          language: detectedLanguage,
+          failureReason:
+            "The query executed successfully but returned zero records.",
+        });
+
+        cypher = refinedCypher;
+        logs.push("Refined Cypher generated with OpenRouter");
+
+        execution = await executeGraphQuery(cypher, params);
+        logs.push(`Refined query executed, records: ${execution.records.length}`);
+      } catch (error) {
+        console.error("Cypher refinement failed after empty result:", error);
+        logs.push("Refinement after empty result failed");
+
+        cypher = templateCypher;
+        logs.push("Switched to template query after failed refinement");
+
+        execution = await executeGraphQuery(cypher, params);
+        logs.push(`Template query executed, records: ${execution.records.length}`);
+      }
+    }
   } catch (error) {
     console.error("Dynamic Cypher execution failed:", error);
 
-    cypher = templateCypher;
-    logs.push("Dynamic query execution failed, switched to template query");
+    // Jika query dinamis gagal saat dieksekusi,
+    // sistem mencoba refinement sekali sebelum kembali ke template.
+    if (usedDynamicQuery) {
+      logs.push("Dynamic query execution failed, starting refinement step");
 
-    execution = await executeGraphQuery(cypher, params);
-    logs.push(`Template query executed, records: ${execution.records.length}`);
+      try {
+        const failureReason =
+          error instanceof Error ? error.message : "Unknown execution error";
+
+        const refinedCypher = await refineCypher({
+          intent,
+          question,
+          previousCypher: cypher,
+          word: detectedWord,
+          language: detectedLanguage,
+          failureReason,
+        });
+
+        cypher = refinedCypher;
+        logs.push("Refined Cypher generated with OpenRouter");
+
+        execution = await executeGraphQuery(cypher, params);
+        logs.push(`Refined query executed, records: ${execution.records.length}`);
+      } catch (refineError) {
+        console.error("Dynamic Cypher refinement execution failed:", refineError);
+
+        // Jika refinement juga gagal, sistem kembali ke template query.
+        cypher = templateCypher;
+        logs.push("Refinement failed, switched to template query");
+
+        execution = await executeGraphQuery(cypher, params);
+        logs.push(`Template query executed, records: ${execution.records.length}`);
+      }
+    } else {
+      // Jika sejak awal memakai template dan tetap error, lempar ulang.
+      throw error;
+    }
   }
 
-  // Tahap 6: jika hasil kosong, coba fallback resolution.
+  // Tahap 6: jika hasil masih kosong, coba fallback resolution berbasis entity.
   if (execution.records.length === 0) {
     const retried = await retryQueryWithFallback({
       cypher,
@@ -190,7 +300,7 @@ export async function runGraphRag(question: string) {
     detectedLanguage = retried.detectedLanguage;
   }
 
-  // Tahap 7: bentuk jawaban natural language.
+  // Tahap 7: membentuk jawaban akhir berdasarkan records hasil query.
   const answer = buildNaturalAnswer({
     intent,
     records: execution.records,
@@ -199,7 +309,7 @@ export async function runGraphRag(question: string) {
   });
   logs.push("Answer generated successfully");
 
-  // Tahap 8: bentuk graph untuk Cytoscape.
+  // Tahap 8: membentuk graph payload untuk divisualisasikan di Cytoscape.
   const graph = buildGraphPayload(intent, execution.records);
   logs.push(
     `Graph built successfully: ${graph.nodes.length} nodes, ${graph.edges.length} edges`
