@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import driver from "@/lib/neo4j";
-import { buildGraphFromRecords } from "@/lib/cytoscape";
 import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
+import { buildGraphFromRecords } from "@/lib/cytoscape";
 import {
   AskGraphSchema,
   GraphIntent,
@@ -43,7 +43,9 @@ function detectIntentRuleBased(question: string): GraphIntent {
     (normalized.includes("berasal dari bahasa apa") ||
       normalized.includes("asal bahasa") ||
       normalized.includes("dari bahasa apa") ||
-      normalized.includes("bahasa asal")) &&
+      normalized.includes("bahasa asal") ||
+      normalized.includes("bahasa asalnya") ||
+      normalized.includes("relasi kata")) &&
     detectWordFromQuestion(question)
   ) {
     return "origin_of_word";
@@ -77,15 +79,17 @@ function getCypherByIntent(intent: GraphIntent): string | null {
   switch (intent) {
     case "origin_of_word":
       return `
-        MATCH (w:Word {lemma: $word})-[:ORIGIN_LANGUAGE]->(l:Language)
-        RETURN w.lemma AS word, l.name AS origin_language
+        MATCH (w:Word {lemma: $word})-[:DERIVED_FROM]->(r:RootForm)
+        MATCH (w)-[:ORIGIN_LANGUAGE]->(l:Language)
+        RETURN w.lemma AS word, r.form AS root_form, l.name AS origin_language
         LIMIT 1
       `.trim();
 
     case "words_by_language":
       return `
         MATCH (w:Word)-[:ORIGIN_LANGUAGE]->(l:Language {name: $language})
-        RETURN w.lemma AS word, l.name AS origin_language
+        OPTIONAL MATCH (w)-[:DERIVED_FROM]->(r:RootForm)
+        RETURN w.lemma AS word, r.form AS root_form, l.name AS origin_language
         ORDER BY w.lemma
       `.trim();
 
@@ -109,7 +113,7 @@ function buildAnswer(
 ): string {
   if (records.length === 0) {
     if (intent === "origin_of_word" && word) {
-      return `Data asal bahasa untuk kata "${word}" tidak ditemukan.`;
+      return `Data etimologi untuk kata "${word}" tidak ditemukan.`;
     }
 
     if (intent === "words_by_language" && language) {
@@ -124,7 +128,15 @@ function buildAnswer(
   }
 
   if (intent === "origin_of_word") {
-    return `Kata "${records[0].word}" berasal dari bahasa ${records[0].origin_language}.`;
+    const resultWord = records[0].word;
+    const rootForm = records[0].root_form;
+    const originLanguage = records[0].origin_language;
+
+    if (rootForm && resultWord && rootForm.toLowerCase() !== resultWord.toLowerCase()) {
+      return `Kata "${resultWord}" berasal dari kata "${rootForm}" yang berasal dari bahasa ${originLanguage}.`;
+    }
+
+    return `Kata "${resultWord}" berasal dari bahasa ${originLanguage}.`;
   }
 
   if (intent === "words_by_language") {

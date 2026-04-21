@@ -26,6 +26,11 @@ function makeEdge(id: string, source: string, target: string, label: string) {
   };
 }
 
+function isSameForm(a?: string, b?: string) {
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 export function buildGraphFromRecords(
   intent: GraphIntent,
   records: GenericRecord[]
@@ -33,23 +38,90 @@ export function buildGraphFromRecords(
   const nodesMap = new Map<string, ReturnType<typeof makeNode>>();
   const edgesMap = new Map<string, ReturnType<typeof makeEdge>>();
 
-  if (intent === "origin_of_word" || intent === "words_by_language") {
+  if (intent === "origin_of_word") {
     records.forEach((record, index) => {
       const word = record.word;
+      const rootForm = record.root_form;
+      const language = record.origin_language;
+
+      if (!word) return;
+
+      const wordId = `word:${word}`;
+      nodesMap.set(wordId, makeNode(wordId, word, "Word"));
+
+      const hasDistinctRoot = rootForm && !isSameForm(word, rootForm);
+
+      if (hasDistinctRoot) {
+        const rootId = `root:${rootForm}`;
+        nodesMap.set(rootId, makeNode(rootId, rootForm!, "RootForm"));
+
+        const derivedEdgeId = `edge:derived:${word}:${rootForm}:${index}`;
+        edgesMap.set(
+          derivedEdgeId,
+          makeEdge(derivedEdgeId, wordId, rootId, "DERIVED_FROM")
+        );
+
+        if (language) {
+          const languageId = `language:${language}`;
+          nodesMap.set(languageId, makeNode(languageId, language, "Language"));
+
+          const originEdgeId = `edge:origin:${rootForm}:${language}:${index}`;
+          edgesMap.set(
+            originEdgeId,
+            makeEdge(originEdgeId, rootId, languageId, "ORIGIN_LANGUAGE")
+          );
+        }
+      } else if (language) {
+        const languageId = `language:${language}`;
+        nodesMap.set(languageId, makeNode(languageId, language, "Language"));
+
+        const edgeId = `edge:origin:${word}:${language}:${index}`;
+        edgesMap.set(
+          edgeId,
+          makeEdge(edgeId, wordId, languageId, "ORIGIN_LANGUAGE")
+        );
+      }
+    });
+  }
+
+  if (intent === "words_by_language") {
+    records.forEach((record, index) => {
+      const word = record.word;
+      const rootForm = record.root_form;
       const language = record.origin_language;
 
       if (!word || !language) return;
 
       const wordId = `word:${word}`;
       const languageId = `language:${language}`;
-      const edgeId = `edge:origin:${word}:${language}:${index}`;
 
       nodesMap.set(wordId, makeNode(wordId, word, "Word"));
       nodesMap.set(languageId, makeNode(languageId, language, "Language"));
-      edgesMap.set(
-        edgeId,
-        makeEdge(edgeId, wordId, languageId, "ORIGIN_LANGUAGE")
-      );
+
+      const hasDistinctRoot = rootForm && !isSameForm(word, rootForm);
+
+      if (hasDistinctRoot) {
+        const rootId = `root:${rootForm}`;
+        nodesMap.set(rootId, makeNode(rootId, rootForm!, "RootForm"));
+
+        const derivedEdgeId = `edge:derived:${word}:${rootForm}:${index}`;
+        const originEdgeId = `edge:origin:${rootForm}:${language}:${index}`;
+
+        edgesMap.set(
+          derivedEdgeId,
+          makeEdge(derivedEdgeId, wordId, rootId, "DERIVED_FROM")
+        );
+        edgesMap.set(
+          originEdgeId,
+          makeEdge(originEdgeId, rootId, languageId, "ORIGIN_LANGUAGE")
+        );
+      } else {
+        const edgeId = `edge:origin:${word}:${language}:${index}`;
+        edgesMap.set(
+          edgeId,
+          makeEdge(edgeId, wordId, languageId, "ORIGIN_LANGUAGE")
+        );
+      }
     });
   }
 
