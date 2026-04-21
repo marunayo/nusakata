@@ -1,22 +1,3 @@
-/**
- * Tahap: GraphRAG Orchestrator
- * Peran: Mengatur urutan seluruh proses GraphRAG dari awal sampai akhir.
- * Input: Pertanyaan user dalam bentuk string.
- * Output: Objek hasil GraphRAG yang siap dikirim ke frontend.
- *
- * Penjelasan:
- * File ini adalah inti alur sistem.
- * Semua tahap dipanggil dari sini secara berurutan, yaitu:
- * 1. memahami intent user,
- * 2. menormalkan entity,
- * 3. memilih query,
- * 4. menjalankan query,
- * 5. melakukan fallback bila perlu,
- * 6. membentuk jawaban,
- * 7. membentuk graph.
- *
- * File ini cocok dijadikan titik utama saat menjelaskan alur GraphRAG ke dosen.
- */
 import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
 import { normalizeDetectedEntities } from "@/services/graphrag/normalizeEntities";
 import { selectQueryTemplate } from "@/services/graphrag/selectQueryTemplate";
@@ -24,6 +5,7 @@ import { executeGraphQuery } from "@/services/graphrag/executeQuery";
 import { retryQueryWithFallback } from "@/services/graphrag/retryWithFallback";
 import { buildNaturalAnswer } from "@/services/graphrag/generateAnswer";
 import { buildGraphPayload } from "@/services/graphrag/buildGraph";
+import { generateDynamicCypher } from "@/services/graphrag/generateDynamicCypher";
 import { GraphIntent } from "@/types/graphrag";
 
 const KNOWN_WORDS = ["kabar", "kursi", "kantor", "gereja", "agama"];
@@ -88,6 +70,12 @@ function detectIntentRuleBased(question: string): GraphIntent {
   return "unknown";
 }
 
+/**
+ * Tahap: GraphRAG Orchestrator
+ * Peran: Mengatur urutan seluruh proses GraphRAG dari awal sampai akhir.
+ * Input: Pertanyaan user dalam bentuk string.
+ * Output: Objek hasil GraphRAG yang siap dikirim ke frontend.
+ */
 export async function runGraphRag(question: string) {
   const logs: string[] = [];
 
@@ -99,8 +87,6 @@ export async function runGraphRag(question: string) {
   let detectedLanguage: string | null = null;
 
   // Tahap 1: memahami maksud pertanyaan user.
-  // Sistem mencoba memakai OpenRouter terlebih dahulu agar lebih fleksibel
-  // terhadap variasi bahasa alami.
   try {
     const parsed = await parseIntentFromQuestion(question);
     intent = parsed.intent;
@@ -111,8 +97,6 @@ export async function runGraphRag(question: string) {
   } catch (error) {
     console.error("Intent parsing failed:", error);
 
-    // Jika parsing semantik gagal, sistem memakai fallback rule-based
-    // agar aplikasi tetap bisa merespons.
     intent = detectIntentRuleBased(question);
     detectedWord = detectWordFromQuestion(question);
     detectedLanguage = detectLanguageFromQuestion(question);
@@ -125,10 +109,7 @@ export async function runGraphRag(question: string) {
   logs.push(`Detected language: ${detectedLanguage ?? "none"}`);
 
   // Tahap 2: normalisasi entity.
-  // Di sini sistem merapikan kata/bahasa yang terdeteksi,
-  // termasuk perbedaan huruf besar-kecil dan typo ringan.
   const normalized = normalizeDetectedEntities(detectedWord, detectedLanguage);
-
   detectedWord = normalized.word;
   detectedLanguage = normalized.language;
   logs.push(...normalized.logs);
@@ -152,23 +133,48 @@ export async function runGraphRag(question: string) {
     };
   }
 
-  // Tahap 3: memilih query template.
-  // Query tidak dibuat bebas oleh LLM, tetapi dipilih dari template
-  // yang aman berdasarkan intent agar hasil lebih stabil.
-  const cypher = selectQueryTemplate(intent);
-  logs.push(`Query template selected for intent: ${intent}`);
-  logs.push("Cypher prepared");
+  // Tahap 3: siapkan query template sebagai fallback.
+  const templateCypher = selectQueryTemplate(intent);
+  let cypher = templateCypher;
 
   const params: Record<string, string> = {};
   if (detectedWord) params.word = detectedWord;
   if (detectedLanguage) params.language = detectedLanguage;
 
-  // Tahap 4: menjalankan query utama ke Neo4j.
-  let execution = await executeGraphQuery(cypher, params);
-  logs.push(`Neo4j query executed, records: ${execution.records.length}`);
+  // Tahap 4: coba bangkitkan query dinamis dengan LLM.
+  try {
+    cypher = await generateDynamicCypher({
+      intent,
+      question,
+      word: detectedWord,
+      language: detectedLanguage,
+    });
 
-  // Tahap 5: jika hasil kosong, sistem mencoba fallback resolution.
-  // Ini membuat sistem lebih tahan terhadap entity yang belum tepat.
+    logs.push("Dynamic Cypher generated with OpenRouter");
+  } catch (error) {
+    console.error("Dynamic Cypher generation failed:", error);
+    cypher = templateCypher;
+    logs.push("Dynamic Cypher generation failed, switched to template query");
+  }
+
+  logs.push(`Cypher prepared for intent: ${intent}`);
+
+  // Tahap 5: eksekusi query.
+  let execution;
+  try {
+    execution = await executeGraphQuery(cypher, params);
+    logs.push(`Neo4j query executed, records: ${execution.records.length}`);
+  } catch (error) {
+    console.error("Dynamic Cypher execution failed:", error);
+
+    cypher = templateCypher;
+    logs.push("Dynamic query execution failed, switched to template query");
+
+    execution = await executeGraphQuery(cypher, params);
+    logs.push(`Template query executed, records: ${execution.records.length}`);
+  }
+
+  // Tahap 6: jika hasil kosong, coba fallback resolution.
   if (execution.records.length === 0) {
     const retried = await retryQueryWithFallback({
       cypher,
@@ -184,7 +190,7 @@ export async function runGraphRag(question: string) {
     detectedLanguage = retried.detectedLanguage;
   }
 
-  // Tahap 6: membentuk jawaban akhir dari records hasil query.
+  // Tahap 7: bentuk jawaban natural language.
   const answer = buildNaturalAnswer({
     intent,
     records: execution.records,
@@ -193,7 +199,7 @@ export async function runGraphRag(question: string) {
   });
   logs.push("Answer generated successfully");
 
-  // Tahap 7: membentuk graph payload untuk divisualisasikan di Cytoscape.
+  // Tahap 8: bentuk graph untuk Cytoscape.
   const graph = buildGraphPayload(intent, execution.records);
   logs.push(
     `Graph built successfully: ${graph.nodes.length} nodes, ${graph.edges.length} edges`
