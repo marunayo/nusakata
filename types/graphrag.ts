@@ -18,6 +18,14 @@ export const GraphIntentSchema = z.enum([
 
 export type GraphIntent = z.infer<typeof GraphIntentSchema>;
 
+export const SemanticIntentResultSchema = z.object({
+  intent: GraphIntentSchema,
+  word: z.string().nullable(),
+  language: z.string().nullable(),
+});
+
+export type SemanticIntentResult = z.infer<typeof SemanticIntentResultSchema>;
+
 export const GenericRecordSchema = z.record(z.string(), z.string());
 
 export type GenericRecord = z.infer<typeof GenericRecordSchema>;

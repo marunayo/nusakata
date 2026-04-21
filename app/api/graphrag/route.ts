@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import driver from "@/lib/neo4j";
+import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
 import {
   AskGraphSchema,
   GraphIntent,
@@ -34,12 +35,14 @@ function detectLanguageFromQuestion(question: string): string | null {
   return null;
 }
 
-function detectIntent(question: string): GraphIntent {
+function detectIntentRuleBased(question: string): GraphIntent {
   const normalized = question.toLowerCase();
 
   if (
     (normalized.includes("berasal dari bahasa apa") ||
-      normalized.includes("asal bahasa")) &&
+      normalized.includes("asal bahasa") ||
+      normalized.includes("dari bahasa apa") ||
+      normalized.includes("bahasa asal")) &&
     detectWordFromQuestion(question)
   ) {
     return "origin_of_word";
@@ -48,7 +51,8 @@ function detectIntent(question: string): GraphIntent {
   if (
     (normalized.includes("semua kata") ||
       normalized.includes("tampilkan semua kata") ||
-      normalized.includes("kata apa saja")) &&
+      normalized.includes("kata apa saja") ||
+      normalized.includes("kasih semua kata")) &&
     normalized.includes("bahasa") &&
     detectLanguageFromQuestion(question)
   ) {
@@ -58,6 +62,7 @@ function detectIntent(question: string): GraphIntent {
   if (
     (normalized.includes("akar kata") ||
       normalized.includes("root") ||
+      normalized.includes("kata dasar") ||
       normalized.includes("turunan dari")) &&
     detectWordFromQuestion(question)
   ) {
@@ -183,9 +188,26 @@ export async function POST(req: NextRequest) {
     logs.push("Request validated with Zod");
 
     const question = parsed.data.question;
-    const detectedWord = detectWordFromQuestion(question);
-    const detectedLanguage = detectLanguageFromQuestion(question);
-    const intent = detectIntent(question);
+
+    let intent: GraphIntent = "unknown";
+    let detectedWord: string | null = null;
+    let detectedLanguage: string | null = null;
+
+    try {
+      const semanticResult = await parseIntentFromQuestion(question);
+      intent = semanticResult.intent;
+      detectedWord = semanticResult.word;
+      detectedLanguage = semanticResult.language;
+
+      logs.push("Semantic intent parsed by OpenRouter");
+    } catch (error) {
+      console.error("Semantic intent parsing failed:", error);
+      logs.push("Semantic intent parser failed, using rule-based fallback");
+
+      intent = detectIntentRuleBased(question);
+      detectedWord = detectWordFromQuestion(question);
+      detectedLanguage = detectLanguageFromQuestion(question);
+    }
 
     logs.push(`Detected intent: ${intent}`);
     logs.push(`Detected word: ${detectedWord ?? "none"}`);
@@ -220,8 +242,7 @@ export async function POST(req: NextRequest) {
     const params: Record<string, string> = {};
 
     if (detectedWord) {
-      params.word = detectedWord;
-      params.lemma = detectedWord;
+      params.word = detectedWord.toLowerCase();
     }
 
     if (detectedLanguage) {
