@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import driver from "@/lib/neo4j";
 import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
+import { normalizeLanguage, normalizeWord } from "@/lib/entityNormalization";
 import { buildGraphFromRecords } from "@/lib/cytoscape";
 import {
   AskGraphSchema,
@@ -223,8 +224,35 @@ export async function POST(req: NextRequest) {
     }
 
     logs.push(`Detected intent: ${intent}`);
-    logs.push(`Detected word: ${detectedWord ?? "none"}`);
-    logs.push(`Detected language: ${detectedLanguage ?? "none"}`);
+    logs.push(`Final word: ${detectedWord ?? "none"}`);
+    logs.push(`Final language: ${detectedLanguage ?? "none"}`);
+
+    const normalizedWordResult = normalizeWord(detectedWord);
+    const normalizedLanguageResult = normalizeLanguage(detectedLanguage);
+
+    if (detectedWord) {
+      logs.push(
+        `Word normalization: ${detectedWord} -> ${
+          normalizedWordResult.normalized ?? "unmatched"
+        } (${normalizedWordResult.strategy})`
+      );
+    }
+
+    if (detectedLanguage) {
+      logs.push(
+        `Language normalization: ${detectedLanguage} -> ${
+          normalizedLanguageResult.normalized ?? "unmatched"
+        } (${normalizedLanguageResult.strategy})`
+      );
+    }
+
+    if (normalizedWordResult.matched) {
+      detectedWord = normalizedWordResult.normalized;
+    }
+
+    if (normalizedLanguageResult.matched) {
+      detectedLanguage = normalizedLanguageResult.normalized;
+    }
 
     if (intent === "unknown") {
       const payload = GraphRagResponseSchema.parse({
