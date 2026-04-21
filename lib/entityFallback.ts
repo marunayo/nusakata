@@ -1,3 +1,18 @@
+/**
+ * Tahap: Database-backed Fallback Utility
+ * Peran: Mencari kandidat entity langsung dari database.
+ * Input: Entity input user dan tipe entity (word/language).
+ * Output: Kandidat entity terbaik dari database, jika ada.
+ *
+ * Penjelasan:
+ * Jika entity yang dipakai pada query pertama belum cocok,
+ * sistem dapat mencoba mencari kandidat yang lebih dekat
+ * langsung dari isi database Neo4j.
+ *
+ * Dengan cara ini, fallback tidak hanya bergantung
+ * pada daftar lokal, tetapi juga pada data nyata
+ * yang tersimpan di graph database.
+ */
 import driver from "@/lib/neo4j";
 
 type EntityType = "word" | "language";
@@ -8,6 +23,8 @@ type FallbackResult = {
   source: "local" | "database" | "none";
 };
 
+// Fungsi ini mencari kandidat entity terbaik langsung dari database,
+// lalu mengembalikan kandidat yang paling dekat dengan input user.
 function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, () =>
     Array(b.length + 1).fill(0)

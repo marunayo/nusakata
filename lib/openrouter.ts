@@ -1,3 +1,18 @@
+/**
+ * Tahap: LLM Connection Utility
+ * Peran: Menyediakan koneksi ke OpenRouter.
+ * Input: Prompt/messages dari sistem.
+ * Output: Respons model dalam bentuk teks.
+ *
+ * Penjelasan:
+ * File ini menjadi penghubung antara aplikasi dan model bahasa.
+ * Tahap ini dipakai terutama untuk membantu sistem
+ * memahami intent pertanyaan user.
+ *
+ * Dengan memisahkan koneksi LLM ke file ini,
+ * logic GraphRAG tetap rapi dan tidak bercampur
+ * dengan detail teknis request API model.
+ */
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 type ChatMessage = {

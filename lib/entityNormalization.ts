@@ -1,3 +1,19 @@
+/**
+ * Tahap: Entity Matching Utility
+ * Peran: Menyediakan utilitas pencocokan entity.
+ * Input: Entity mentah dari user atau hasil parsing.
+ * Output: Entity yang sudah dicocokkan dengan daftar sistem.
+ *
+ * Penjelasan:
+ * File ini berisi fungsi pendukung untuk normalisasi entity,
+ * seperti:
+ * - exact match,
+ * - case-insensitive match,
+ * - fuzzy match berbasis jarak Levenshtein.
+ *
+ * File ini tidak langsung menjalankan proses GraphRAG,
+ * tetapi mendukung tahap normalisasi agar hasilnya lebih akurat.
+ */
 type NormalizedEntityResult = {
   original: string | null;
   normalized: string | null;
@@ -9,6 +25,8 @@ type NormalizedEntityResult = {
 const KNOWN_WORDS = ["kabar", "kursi", "kantor", "gereja", "agama"];
 const KNOWN_LANGUAGES = ["Arab", "Belanda", "Portugis", "Sanskerta"];
 
+// Menghitung jarak edit antara dua string.
+// Semakin kecil nilainya, semakin mirip kedua string tersebut.
 function levenshtein(a: string, b: string): number {
   const dp = Array.from({ length: a.length + 1 }, () =>
     Array(b.length + 1).fill(0)
@@ -122,10 +140,12 @@ function normalizeAgainstList(
   };
 }
 
+// Menormalkan kata target agar cocok dengan daftar kata yang dikenali sistem.
 export function normalizeWord(value: string | null): NormalizedEntityResult {
   return normalizeAgainstList(value, KNOWN_WORDS, true);
 }
 
+// Menormalkan nama bahasa target agar cocok dengan daftar bahasa yang dikenali sistem.
 export function normalizeLanguage(value: string | null): NormalizedEntityResult {
   return normalizeAgainstList(value, KNOWN_LANGUAGES, false);
 }

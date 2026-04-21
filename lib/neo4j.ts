@@ -1,3 +1,15 @@
+/**
+ * Tahap: Database Connection Utility
+ * Peran: Menyediakan koneksi ke Neo4j Aura.
+ * Input: Environment variables koneksi database.
+ * Output: Driver Neo4j yang bisa dipakai service lain.
+ *
+ * Penjelasan:
+ * File ini bertanggung jawab membuat dan menyediakan koneksi
+ * ke Neo4j Aura.
+ * Service lain tidak perlu tahu detail koneksinya,
+ * cukup menggunakan driver yang sudah disiapkan di sini.
+ */
 import neo4j, { Driver } from "neo4j-driver";
 
 declare global {

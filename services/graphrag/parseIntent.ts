@@ -1,9 +1,27 @@
+/**
+ * Tahap: Intent Parsing
+ * Peran: Memahami maksud pertanyaan user.
+ * Input: Pertanyaan user dalam bahasa alami.
+ * Output: Intent, kata target, dan bahasa target.
+ *
+ * Penjelasan:
+ * Pada tahap ini, sistem mencoba memahami:
+ * - user sedang menanyakan apa,
+ * - kata apa yang menjadi fokus,
+ * - bahasa apa yang menjadi fokus.
+ *
+ * Parsing dilakukan dengan bantuan model melalui OpenRouter.
+ * Hasilnya kemudian divalidasi agar tetap sesuai format
+ * yang dibutuhkan oleh sistem.
+ */
 import { callOpenRouter } from "@/lib/openrouter";
 import {
   SemanticIntentResult,
   SemanticIntentResultSchema,
 } from "@/types/graphrag";
 
+// Fungsi ini meminta model untuk mengekstrak intent,
+// kata target, dan bahasa target dari pertanyaan user.
 function extractJsonObject(text: string): string {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");

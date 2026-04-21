@@ -1,3 +1,18 @@
+/**
+ * Tahap: Shared Types and Validation Schema
+ * Peran: Menyimpan tipe data dan schema validasi utama GraphRAG.
+ * Input: Data dari request, service internal, dan response.
+ * Output: Struktur data yang konsisten di seluruh sistem.
+ *
+ * Penjelasan:
+ * File ini dipakai untuk menjaga agar format data
+ * tetap konsisten antar tahap.
+ * Selain tipe TypeScript, file ini juga berisi schema Zod
+ * untuk validasi input dan output.
+ *
+ * Dengan file ini, sistem menjadi lebih aman
+ * dan lebih mudah dirawat.
+ */
 import { z } from "zod";
 
 export const AskGraphSchema = z.object({

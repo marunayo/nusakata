@@ -1,3 +1,20 @@
+/**
+ * Tahap: Graph Building Utility
+ * Peran: Mengubah records menjadi node dan edge untuk Cytoscape.
+ * Input: Intent dan records hasil query.
+ * Output: Struktur graph yang siap divisualisasikan.
+ *
+ * Penjelasan:
+ * File ini berisi logic pembentukan graph visual.
+ * Bentuk graph yang dihasilkan bisa berbeda tergantung intent,
+ * misalnya:
+ * - word -> language,
+ * - word -> root form -> language,
+ * - atau word -> root form.
+ *
+ * Untuk beberapa kasus, file ini juga membuat inferensi visual
+ * agar relasi etimologi lebih mudah dipahami saat ditampilkan.
+ */
 import {
   GraphElements,
   GraphIntent,
@@ -5,6 +22,11 @@ import {
   GraphElementsSchema,
 } from "@/types/graphrag";
 
+// Fungsi ini mengubah records hasil query menjadi graph.
+// Bentuk graph berbeda tergantung intent:
+// - origin_of_word,
+// - words_by_language,
+// - root_of_word.
 function makeNode(id: string, label: string, type: string) {
   return {
     data: {

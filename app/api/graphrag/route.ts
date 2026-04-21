@@ -1,207 +1,36 @@
+/**
+ * Tahap: API Entry Point
+ * Peran: Menjadi pintu masuk request dari frontend ke alur GraphRAG.
+ * Input: HTTP request yang berisi pertanyaan user.
+ * Output: HTTP response berisi hasil akhir GraphRAG.
+ *
+ * Penjelasan:
+ * File ini sengaja dibuat ringan agar mudah dipahami.
+ * Tugas utamanya hanya:
+ * 1. menerima request,
+ * 2. memvalidasi input,
+ * 3. memanggil orchestrator GraphRAG,
+ * 4. mengirimkan response kembali ke frontend.
+ *
+ * Semua logika utama dipindahkan ke service lain
+ * agar alur sistem lebih modular dan mudah dipresentasikan.
+ */
 import { NextRequest, NextResponse } from "next/server";
-import driver from "@/lib/neo4j";
-import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
-import { findFallbackEntityInDatabase } from "@/lib/entityFallback";
-import { normalizeLanguage, normalizeWord } from "@/lib/entityNormalization";
-import { buildGraphFromRecords } from "@/lib/cytoscape";
-import {
-  AskGraphSchema,
-  GraphIntent,
-  GraphRagResponseSchema,
-  GenericRecordSchema,
-} from "@/types/graphrag";
-
-const KNOWN_WORDS = ["kabar", "kursi", "kantor", "gereja", "agama"];
-const KNOWN_LANGUAGES = ["Arab", "Belanda", "Portugis", "Sanskerta"];
-
-function detectWordFromQuestion(question: string): string | null {
-  const normalized = question.toLowerCase();
-
-  for (const word of KNOWN_WORDS) {
-    if (normalized.includes(word)) {
-      return word;
-    }
-  }
-
-  return null;
-}
-
-function detectLanguageFromQuestion(question: string): string | null {
-  const normalized = question.toLowerCase();
-
-  for (const language of KNOWN_LANGUAGES) {
-    if (normalized.includes(language.toLowerCase())) {
-      return language;
-    }
-  }
-
-  return null;
-}
-
-function detectIntentRuleBased(question: string): GraphIntent {
-  const normalized = question.toLowerCase();
-
-  if (
-    (normalized.includes("berasal dari bahasa apa") ||
-      normalized.includes("asal bahasa") ||
-      normalized.includes("dari bahasa apa") ||
-      normalized.includes("bahasa asal") ||
-      normalized.includes("bahasa asalnya") ||
-      normalized.includes("relasi kata")) &&
-    detectWordFromQuestion(question)
-  ) {
-    return "origin_of_word";
-  }
-
-  if (
-    (normalized.includes("semua kata") ||
-      normalized.includes("tampilkan semua kata") ||
-      normalized.includes("kata apa saja") ||
-      normalized.includes("kasih semua kata")) &&
-    normalized.includes("bahasa") &&
-    detectLanguageFromQuestion(question)
-  ) {
-    return "words_by_language";
-  }
-
-  if (
-    (normalized.includes("akar kata") ||
-      normalized.includes("root") ||
-      normalized.includes("kata dasar") ||
-      normalized.includes("turunan dari")) &&
-    detectWordFromQuestion(question)
-  ) {
-    return "root_of_word";
-  }
-
-  return "unknown";
-}
-
-function getCypherByIntent(intent: GraphIntent): string | null {
-  switch (intent) {
-    case "origin_of_word":
-      return `
-        MATCH (w:Word {lemma: $word})-[:DERIVED_FROM]->(r:RootForm)
-        MATCH (w)-[:ORIGIN_LANGUAGE]->(l:Language)
-        RETURN w.lemma AS word, r.form AS root_form, l.name AS origin_language
-        LIMIT 1
-      `.trim();
-
-    case "words_by_language":
-      return `
-        MATCH (w:Word)-[:ORIGIN_LANGUAGE]->(l:Language {name: $language})
-        OPTIONAL MATCH (w)-[:DERIVED_FROM]->(r:RootForm)
-        RETURN w.lemma AS word, r.form AS root_form, l.name AS origin_language
-        ORDER BY w.lemma
-      `.trim();
-
-    case "root_of_word":
-      return `
-        MATCH (w:Word {lemma: $word})-[:DERIVED_FROM]->(r:RootForm)
-        RETURN w.lemma AS word, r.form AS root_form, r.gloss AS gloss
-        LIMIT 1
-      `.trim();
-
-    default:
-      return null;
-  }
-}
-
-function buildAnswer(
-  intent: GraphIntent,
-  records: Record<string, string>[],
-  word: string | null,
-  language: string | null
-): string {
-  if (records.length === 0) {
-    if (intent === "origin_of_word" && word) {
-      return `Data etimologi untuk kata "${word}" tidak ditemukan.`;
-    }
-
-    if (intent === "words_by_language" && language) {
-      return `Tidak ditemukan kata yang berasal dari bahasa ${language}.`;
-    }
-
-    if (intent === "root_of_word" && word) {
-      return `Data akar kata untuk "${word}" tidak ditemukan.`;
-    }
-
-    return "Tidak ada data yang ditemukan.";
-  }
-
-  if (intent === "origin_of_word") {
-    const resultWord = records[0].word;
-    const rootForm = records[0].root_form;
-    const originLanguage = records[0].origin_language;
-
-    if (
-      rootForm &&
-      resultWord &&
-      rootForm.toLowerCase() !== resultWord.toLowerCase()
-    ) {
-      return `Kata "${resultWord}" berasal dari kata "${rootForm}" yang berasal dari bahasa ${originLanguage}.`;
-    }
-
-    return `Kata "${resultWord}" berasal dari bahasa ${originLanguage}.`;
-  }
-
-  if (intent === "words_by_language") {
-    const words = records.map((record) => record.word).filter(Boolean);
-
-    if (words.length === 1) {
-      return `Kata yang berasal dari bahasa ${language} adalah ${words[0]}.`;
-    }
-
-    if (words.length === 2) {
-      return `Kata yang berasal dari bahasa ${language} adalah ${words[0]} dan ${words[1]}.`;
-    }
-
-    const allButLast = words.slice(0, -1).join(", ");
-    const last = words[words.length - 1];
-
-    return `Beberapa kata yang berasal dari bahasa ${language} adalah ${allButLast}, dan ${last}.`;
-  }
-
-  if (intent === "root_of_word") {
-    return `Akar kata dari "${records[0].word}" adalah "${records[0].root_form}" yang bermakna "${records[0].gloss}".`;
-  }
-
-  return "Jawaban berhasil dibuat.";
-}
+import { AskGraphSchema, GraphRagResponseSchema } from "@/types/graphrag";
+import { runGraphRag } from "@/services/graphrag/orchestrator";
 
 export async function GET() {
-  const session = driver.session();
-
-  try {
-    const result = await session.run("RETURN 'Neo4j connected' AS message");
-    const message = result.records[0]?.get("message");
-
-    return NextResponse.json({
-      ok: true,
-      message,
-    });
-  } catch (error) {
-    console.error("Neo4j connection error:", error);
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Failed to connect to Neo4j Aura",
-      },
-      { status: 500 }
-    );
-  } finally {
-    await session.close();
-  }
+  return NextResponse.json({
+    ok: true,
+    message: "NusaKata GraphRAG API is running",
+  });
 }
 
+// Endpoint POST dipakai saat user mengirim pertanyaan.
+// Setelah input valid, pertanyaan akan diproses oleh orchestrator
+// yang menjalankan seluruh alur GraphRAG.
 export async function POST(req: NextRequest) {
-  const session = driver.session();
-  const logs: string[] = [];
-
   try {
-    logs.push("Request received");
-
     const body = await req.json();
     const parsed = AskGraphSchema.safeParse(body);
 
@@ -216,186 +45,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    logs.push("Request validated with Zod");
-
-    const question = parsed.data.question;
-
-    let intent: GraphIntent = "unknown";
-    let detectedWord: string | null = null;
-    let detectedLanguage: string | null = null;
-
-    try {
-      const semanticResult = await parseIntentFromQuestion(question);
-      intent = semanticResult.intent;
-      detectedWord = semanticResult.word;
-      detectedLanguage = semanticResult.language;
-
-      logs.push("Intent parsed with OpenRouter");
-    } catch (error) {
-      console.error("Semantic intent parsing failed:", error);
-      logs.push("Intent parsing failed, switched to rule-based fallback");
-
-      intent = detectIntentRuleBased(question);
-      detectedWord = detectWordFromQuestion(question);
-      detectedLanguage = detectLanguageFromQuestion(question);
-    }
-
-    logs.push(`Detected intent: ${intent}`);
-    logs.push(`Final word: ${detectedWord ?? "none"}`);
-    logs.push(`Final language: ${detectedLanguage ?? "none"}`);
-
-    const normalizedWordResult = normalizeWord(detectedWord);
-    const normalizedLanguageResult = normalizeLanguage(detectedLanguage);
-
-    if (detectedWord) {
-      if (normalizedWordResult.matched) {
-        logs.push(
-          `Word normalized: ${detectedWord} -> ${normalizedWordResult.normalized} [${normalizedWordResult.strategy}]`
-        );
-      } else {
-        logs.push(`Word normalization failed: ${detectedWord}`);
-      }
-    }
-
-    if (detectedLanguage) {
-      if (normalizedLanguageResult.matched) {
-        logs.push(
-          `Language normalized: ${detectedLanguage} -> ${normalizedLanguageResult.normalized} [${normalizedLanguageResult.strategy}]`
-        );
-      } else {
-        logs.push(`Language normalization failed: ${detectedLanguage}`);
-      }
-    }
-
-    if (normalizedWordResult.matched) {
-      detectedWord = normalizedWordResult.normalized;
-    }
-
-    if (normalizedLanguageResult.matched) {
-      detectedLanguage = normalizedLanguageResult.normalized;
-    }
-
-    if (intent === "unknown") {
-      const payload = GraphRagResponseSchema.parse({
-        ok: true,
-        question,
-        intent,
-        detectedWord,
-        detectedLanguage,
-        cypher: null,
-        answer:
-          "Saya belum memahami tipe pertanyaan ini. Coba gunakan pola seperti: 'Kata kabar berasal dari bahasa apa?', 'Tampilkan semua kata dari bahasa Arab', atau 'Akar kata dari kantor apa?'",
-        records: [],
-        graph: {
-          nodes: [],
-          edges: [],
-        },
-        logs,
-      });
-
-      return NextResponse.json(payload);
-    }
-
-    const cypher = getCypherByIntent(intent);
-
-    if (!cypher) {
-      throw new Error("No Cypher available for detected intent.");
-    }
-
-    logs.push(`Query template selected for intent: ${intent}`);
-    logs.push(`Cypher prepared`);
-
-    const params: Record<string, string> = {};
-
-    if (detectedWord) {
-      params.word = detectedWord.toLowerCase();
-    }
-
-    if (detectedLanguage) {
-      params.language = detectedLanguage;
-    }
-
-    let result = await session.run(cypher, params);
-    logs.push(`Neo4j query executed, records: ${result.records.length}`);
-
-    if (result.records.length === 0) {
-      logs.push("No records found on first attempt, starting fallback resolution");
-
-      let retried = false;
-
-      if (detectedWord) {
-        const fallbackWord = await findFallbackEntityInDatabase(detectedWord, "word");
-
-        if (fallbackWord.found && fallbackWord.value && fallbackWord.value !== detectedWord) {
-          logs.push(
-            `Word fallback applied: ${detectedWord} -> ${fallbackWord.value} [${fallbackWord.source}]`
-          );
-
-          detectedWord = fallbackWord.value;
-          params.word = detectedWord;
-          retried = true;
-        }
-      }
-
-      if (detectedLanguage) {
-        const fallbackLanguage = await findFallbackEntityInDatabase(
-          detectedLanguage,
-          "language"
-        );
-
-        if (
-          fallbackLanguage.found &&
-          fallbackLanguage.value &&
-          fallbackLanguage.value !== detectedLanguage
-        ) {
-          logs.push(
-            `Language fallback applied: ${detectedLanguage} -> ${fallbackLanguage.value} [${fallbackLanguage.source}]`
-          );
-
-          detectedLanguage = fallbackLanguage.value;
-          params.language = detectedLanguage;
-          retried = true;
-        }
-      }
-
-      if (retried) {
-        result = await session.run(cypher, params);
-        logs.push(`Fallback retry executed, records: ${result.records.length}`);
-      } else {
-        logs.push("No fallback candidate found");
-      }
-    }
-
-    const records = result.records.map((record) => {
-      const row = record.toObject();
-
-      const normalized = Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [key, String(value)])
-      );
-
-      return GenericRecordSchema.parse(normalized);
-    });
-
-    const answer = buildAnswer(intent, records, detectedWord, detectedLanguage);
-    logs.push("Answer generated successfully");
-
-    const graph = buildGraphFromRecords(intent, records);
-    logs.push(
-      `Graph built successfully: ${graph.nodes.length} nodes, ${graph.edges.length} edges`
-    );
-
-    const payload = GraphRagResponseSchema.parse({
-      ok: true,
-      question,
-      intent,
-      detectedWord,
-      detectedLanguage,
-      cypher,
-      answer,
-      records,
-      graph,
-      logs,
-    });
+    const result = await runGraphRag(parsed.data.question);
+    const payload = GraphRagResponseSchema.parse(result);
 
     return NextResponse.json(payload);
   } catch (error) {
@@ -405,11 +56,8 @@ export async function POST(req: NextRequest) {
       {
         ok: false,
         error: "Terjadi kesalahan pada server",
-        logs,
       },
       { status: 500 }
     );
-  } finally {
-    await session.close();
   }
 }
