@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import driver from "@/lib/neo4j";
 import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
+import { findFallbackEntityInDatabase } from "@/lib/entityFallback";
 import { normalizeLanguage, normalizeWord } from "@/lib/entityNormalization";
 import { buildGraphFromRecords } from "@/lib/cytoscape";
 import {
@@ -133,7 +134,11 @@ function buildAnswer(
     const rootForm = records[0].root_form;
     const originLanguage = records[0].origin_language;
 
-    if (rootForm && resultWord && rootForm.toLowerCase() !== resultWord.toLowerCase()) {
+    if (
+      rootForm &&
+      resultWord &&
+      rootForm.toLowerCase() !== resultWord.toLowerCase()
+    ) {
       return `Kata "${resultWord}" berasal dari kata "${rootForm}" yang berasal dari bahasa ${originLanguage}.`;
     }
 
@@ -141,8 +146,20 @@ function buildAnswer(
   }
 
   if (intent === "words_by_language") {
-    const words = records.map((record) => record.word).join(", ");
-    return `Kata yang berasal dari bahasa ${language} adalah: ${words}.`;
+    const words = records.map((record) => record.word).filter(Boolean);
+
+    if (words.length === 1) {
+      return `Kata yang berasal dari bahasa ${language} adalah ${words[0]}.`;
+    }
+
+    if (words.length === 2) {
+      return `Kata yang berasal dari bahasa ${language} adalah ${words[0]} dan ${words[1]}.`;
+    }
+
+    const allButLast = words.slice(0, -1).join(", ");
+    const last = words[words.length - 1];
+
+    return `Beberapa kata yang berasal dari bahasa ${language} adalah ${allButLast}, dan ${last}.`;
   }
 
   if (intent === "root_of_word") {
@@ -213,10 +230,10 @@ export async function POST(req: NextRequest) {
       detectedWord = semanticResult.word;
       detectedLanguage = semanticResult.language;
 
-      logs.push("Semantic intent parsed by OpenRouter");
+      logs.push("Intent parsed with OpenRouter");
     } catch (error) {
       console.error("Semantic intent parsing failed:", error);
-      logs.push("Semantic intent parser failed, using rule-based fallback");
+      logs.push("Intent parsing failed, switched to rule-based fallback");
 
       intent = detectIntentRuleBased(question);
       detectedWord = detectWordFromQuestion(question);
@@ -231,19 +248,23 @@ export async function POST(req: NextRequest) {
     const normalizedLanguageResult = normalizeLanguage(detectedLanguage);
 
     if (detectedWord) {
-      logs.push(
-        `Word normalization: ${detectedWord} -> ${
-          normalizedWordResult.normalized ?? "unmatched"
-        } (${normalizedWordResult.strategy})`
-      );
+      if (normalizedWordResult.matched) {
+        logs.push(
+          `Word normalized: ${detectedWord} -> ${normalizedWordResult.normalized} [${normalizedWordResult.strategy}]`
+        );
+      } else {
+        logs.push(`Word normalization failed: ${detectedWord}`);
+      }
     }
 
     if (detectedLanguage) {
-      logs.push(
-        `Language normalization: ${detectedLanguage} -> ${
-          normalizedLanguageResult.normalized ?? "unmatched"
-        } (${normalizedLanguageResult.strategy})`
-      );
+      if (normalizedLanguageResult.matched) {
+        logs.push(
+          `Language normalized: ${detectedLanguage} -> ${normalizedLanguageResult.normalized} [${normalizedLanguageResult.strategy}]`
+        );
+      } else {
+        logs.push(`Language normalization failed: ${detectedLanguage}`);
+      }
     }
 
     if (normalizedWordResult.matched) {
@@ -281,8 +302,8 @@ export async function POST(req: NextRequest) {
       throw new Error("No Cypher available for detected intent.");
     }
 
-    logs.push("Cypher selected from intent template");
-    logs.push(`Cypher: ${cypher}`);
+    logs.push(`Query template selected for intent: ${intent}`);
+    logs.push(`Cypher prepared`);
 
     const params: Record<string, string> = {};
 
@@ -294,9 +315,56 @@ export async function POST(req: NextRequest) {
       params.language = detectedLanguage;
     }
 
-    const result = await session.run(cypher, params);
-
+    let result = await session.run(cypher, params);
     logs.push(`Neo4j query executed, records: ${result.records.length}`);
+
+    if (result.records.length === 0) {
+      logs.push("No records found on first attempt, starting fallback resolution");
+
+      let retried = false;
+
+      if (detectedWord) {
+        const fallbackWord = await findFallbackEntityInDatabase(detectedWord, "word");
+
+        if (fallbackWord.found && fallbackWord.value && fallbackWord.value !== detectedWord) {
+          logs.push(
+            `Word fallback applied: ${detectedWord} -> ${fallbackWord.value} [${fallbackWord.source}]`
+          );
+
+          detectedWord = fallbackWord.value;
+          params.word = detectedWord;
+          retried = true;
+        }
+      }
+
+      if (detectedLanguage) {
+        const fallbackLanguage = await findFallbackEntityInDatabase(
+          detectedLanguage,
+          "language"
+        );
+
+        if (
+          fallbackLanguage.found &&
+          fallbackLanguage.value &&
+          fallbackLanguage.value !== detectedLanguage
+        ) {
+          logs.push(
+            `Language fallback applied: ${detectedLanguage} -> ${fallbackLanguage.value} [${fallbackLanguage.source}]`
+          );
+
+          detectedLanguage = fallbackLanguage.value;
+          params.language = detectedLanguage;
+          retried = true;
+        }
+      }
+
+      if (retried) {
+        result = await session.run(cypher, params);
+        logs.push(`Fallback retry executed, records: ${result.records.length}`);
+      } else {
+        logs.push("No fallback candidate found");
+      }
+    }
 
     const records = result.records.map((record) => {
       const row = record.toObject();
@@ -309,11 +377,11 @@ export async function POST(req: NextRequest) {
     });
 
     const answer = buildAnswer(intent, records, detectedWord, detectedLanguage);
-    logs.push("Answer generated from query result");
+    logs.push("Answer generated successfully");
 
     const graph = buildGraphFromRecords(intent, records);
     logs.push(
-      `Graph built with ${graph.nodes.length} nodes and ${graph.edges.length} edges`
+      `Graph built successfully: ${graph.nodes.length} nodes, ${graph.edges.length} edges`
     );
 
     const payload = GraphRagResponseSchema.parse({
