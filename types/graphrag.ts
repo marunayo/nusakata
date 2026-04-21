@@ -30,6 +30,32 @@ export const GenericRecordSchema = z.record(z.string(), z.string());
 
 export type GenericRecord = z.infer<typeof GenericRecordSchema>;
 
+export const CytoscapeNodeSchema = z.object({
+  data: z.object({
+    id: z.string(),
+    label: z.string(),
+    type: z.string(),
+  }),
+});
+
+export const CytoscapeEdgeSchema = z.object({
+  data: z.object({
+    id: z.string(),
+    source: z.string(),
+    target: z.string(),
+    label: z.string(),
+  }),
+});
+
+export const GraphElementsSchema = z.object({
+  nodes: z.array(CytoscapeNodeSchema).default([]),
+  edges: z.array(CytoscapeEdgeSchema).default([]),
+});
+
+export type CytoscapeNode = z.infer<typeof CytoscapeNodeSchema>;
+export type CytoscapeEdge = z.infer<typeof CytoscapeEdgeSchema>;
+export type GraphElements = z.infer<typeof GraphElementsSchema>;
+
 export const GraphRagResponseSchema = z.object({
   ok: z.boolean(),
   question: z.string(),
@@ -39,6 +65,7 @@ export const GraphRagResponseSchema = z.object({
   cypher: z.string().nullable(),
   answer: z.string(),
   records: z.array(GenericRecordSchema).default([]),
+  graph: GraphElementsSchema,
   logs: z.array(z.string()).default([]),
 });
 

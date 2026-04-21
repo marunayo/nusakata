@@ -1,8 +1,55 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  CSSProperties,
+  ComponentType,
+} from "react";
+import dynamic from "next/dynamic";
+
+type CytoscapeNode = {
+  data: {
+    id: string;
+    label: string;
+    type: string;
+  };
+};
+
+type CytoscapeEdge = {
+  data: {
+    id: string;
+    source: string;
+    target: string;
+    label: string;
+  };
+};
+
+type CytoscapeElement = CytoscapeNode | CytoscapeEdge;
+
+type CytoscapeComponentProps = {
+  elements: CytoscapeElement[];
+  style?: CSSProperties;
+  layout?: Record<string, unknown>;
+  stylesheet?: Array<Record<string, unknown>>;
+  cy?: (cy: unknown) => void;
+};
+
+const CytoscapeComponent = dynamic(
+  () =>
+    import("react-cytoscapejs") as Promise<
+      ComponentType<CytoscapeComponentProps>
+    >,
+  { ssr: false }
+);
 
 type GraphRecord = Record<string, string>;
+
+type GraphElements = {
+  nodes: CytoscapeNode[];
+  edges: CytoscapeEdge[];
+};
 
 type GraphRagResponse = {
   ok: boolean;
@@ -13,6 +60,7 @@ type GraphRagResponse = {
   cypher: string | null;
   answer: string;
   records: GraphRecord[];
+  graph: GraphElements;
   logs: string[];
 };
 
@@ -20,8 +68,11 @@ const EXAMPLE_QUESTIONS = [
   "Kata kabar berasal dari bahasa apa?",
   "Tampilkan semua kata dari bahasa Arab",
   "Akar kata dari kantor apa?",
-  "Kata gereja berasal dari bahasa apa?",
-  "Tampilkan semua kata dari bahasa Belanda",
+  "Kantor itu dari bahasa apa ya?",
+  "Apa bahasa asal kata kursi?",
+  "Kasih semua kata dari bahasa Arab",
+  "Kata dasar kantor apa?",
+  "Semua kata yang berasal dari Belanda apa saja?",
 ];
 
 function formatIntentLabel(intent: GraphRagResponse["intent"]) {
@@ -48,6 +99,16 @@ export default function HomePage() {
     return Object.keys(result.records[0]);
   }, [result]);
 
+  const cytoscapeElements = useMemo<CytoscapeElement[]>(() => {
+    if (!result?.graph) return [];
+    return [...result.graph.nodes, ...result.graph.edges];
+  }, [result]);
+
+  const graphKey = useMemo(() => {
+    if (!result?.graph) return "empty-graph";
+    return JSON.stringify(result.graph);
+  }, [result]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -71,13 +132,17 @@ export default function HomePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data?.error || "Terjadi kesalahan saat memproses pertanyaan.");
+        throw new Error(
+          data?.error || "Terjadi kesalahan saat memproses pertanyaan."
+        );
       }
 
       setResult(data);
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Terjadi kesalahan yang tidak diketahui.";
+        err instanceof Error
+          ? err.message
+          : "Terjadi kesalahan yang tidak diketahui.";
       setError(message);
       setResult(null);
     } finally {
@@ -91,7 +156,7 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-10 text-slate-900">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-7xl">
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">NusaKata</h1>
           <p className="mt-2 text-sm text-slate-600">
@@ -103,13 +168,16 @@ export default function HomePage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
             <h2 className="text-lg font-semibold">Input Pertanyaan</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Gunakan pertanyaan tentang asal bahasa, daftar kata berdasarkan bahasa,
-              atau akar kata.
+              Gunakan pertanyaan tentang asal bahasa, daftar kata berdasarkan
+              bahasa, atau akar kata.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-4 space-y-4">
               <div>
-                <label htmlFor="question" className="mb-2 block text-sm font-medium">
+                <label
+                  htmlFor="question"
+                  className="mb-2 block text-sm font-medium"
+                >
                   Pertanyaan
                 </label>
                 <textarea
@@ -117,7 +185,7 @@ export default function HomePage() {
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   placeholder='Contoh: Tampilkan semua kata dari bahasa Arab'
-                  className="min-h-[120px] w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  className="min-h-30 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                 />
               </div>
 
@@ -183,7 +251,9 @@ export default function HomePage() {
                       <p className="text-xs uppercase tracking-wide text-slate-500">
                         Intent
                       </p>
-                      <p className="mt-1 text-sm">{formatIntentLabel(result.intent)}</p>
+                      <p className="mt-1 text-sm">
+                        {formatIntentLabel(result.intent)}
+                      </p>
                     </div>
 
                     <div>
@@ -209,7 +279,9 @@ export default function HomePage() {
                     <p className="text-xs uppercase tracking-wide text-slate-500">
                       Jawaban
                     </p>
-                    <p className="mt-2 text-base font-medium">{result.answer}</p>
+                    <p className="mt-2 text-base font-medium">
+                      {result.answer}
+                    </p>
                   </div>
                 </div>
               )}
@@ -226,6 +298,81 @@ export default function HomePage() {
                 <pre className="mt-4 overflow-x-auto rounded-xl bg-slate-950 p-4 text-sm text-slate-100">
                   <code>{result.cypher}</code>
                 </pre>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-lg font-semibold">Graph Visualization</h2>
+
+              {!result || cytoscapeElements.length === 0 ? (
+                <p className="mt-3 text-sm text-slate-500">
+                  Belum ada graph untuk ditampilkan.
+                </p>
+              ) : (
+                <div className="mt-4 h-105 overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <CytoscapeComponent
+                    key={graphKey}
+                    elements={cytoscapeElements}
+                    style={{ width: "100%", height: "100%" }}
+                    layout={{
+                      name: "cose",
+                      animate: false,
+                      fit: true,
+                      padding: 40,
+                    }}
+                    stylesheet={[
+                      {
+                        selector: "node",
+                        style: {
+                          label: "data(label)",
+                          "text-valign": "center",
+                          "text-halign": "center",
+                          color: "#0f172a",
+                          "font-size": "12px",
+                          "background-color": "#cbd5e1",
+                          width: 52,
+                          height: 52,
+                          "border-width": 1,
+                          "border-color": "#94a3b8",
+                        },
+                      },
+                      {
+                        selector: 'node[type = "Word"]',
+                        style: {
+                          "background-color": "#bfdbfe",
+                          "border-color": "#60a5fa",
+                        },
+                      },
+                      {
+                        selector: 'node[type = "Language"]',
+                        style: {
+                          "background-color": "#fde68a",
+                          "border-color": "#f59e0b",
+                        },
+                      },
+                      {
+                        selector: 'node[type = "RootForm"]',
+                        style: {
+                          "background-color": "#fbcfe8",
+                          "border-color": "#ec4899",
+                        },
+                      },
+                      {
+                        selector: "edge",
+                        style: {
+                          label: "data(label)",
+                          width: 2,
+                          color: "#475569",
+                          "font-size": "10px",
+                          "curve-style": "bezier",
+                          "line-color": "#94a3b8",
+                          "target-arrow-color": "#94a3b8",
+                          "target-arrow-shape": "triangle",
+                        },
+                      },
+                    ]}
+                  />
+                </div>
               )}
             </div>
 

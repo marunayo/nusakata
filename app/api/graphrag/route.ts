@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import driver from "@/lib/neo4j";
+import { buildGraphFromRecords } from "@/lib/cytoscape";
 import { parseIntentFromQuestion } from "@/services/graphrag/parseIntent";
 import {
   AskGraphSchema,
@@ -224,6 +225,10 @@ export async function POST(req: NextRequest) {
         answer:
           "Saya belum memahami tipe pertanyaan ini. Coba gunakan pola seperti: 'Kata kabar berasal dari bahasa apa?', 'Tampilkan semua kata dari bahasa Arab', atau 'Akar kata dari kantor apa?'",
         records: [],
+        graph: {
+          nodes: [],
+          edges: [],
+        },
         logs,
       });
 
@@ -266,6 +271,11 @@ export async function POST(req: NextRequest) {
     const answer = buildAnswer(intent, records, detectedWord, detectedLanguage);
     logs.push("Answer generated from query result");
 
+    const graph = buildGraphFromRecords(intent, records);
+    logs.push(
+      `Graph built with ${graph.nodes.length} nodes and ${graph.edges.length} edges`
+    );
+
     const payload = GraphRagResponseSchema.parse({
       ok: true,
       question,
@@ -275,6 +285,7 @@ export async function POST(req: NextRequest) {
       cypher,
       answer,
       records,
+      graph,
       logs,
     });
 
