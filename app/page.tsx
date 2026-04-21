@@ -1,27 +1,52 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 
-type GraphRecord = {
-  word: string;
-  origin_language: string;
-};
+type GraphRecord = Record<string, string>;
 
 type GraphRagResponse = {
   ok: boolean;
   question: string;
+  intent: "origin_of_word" | "words_by_language" | "root_of_word" | "unknown";
   detectedWord: string | null;
+  detectedLanguage: string | null;
   cypher: string | null;
   answer: string;
   records: GraphRecord[];
   logs: string[];
 };
 
+const EXAMPLE_QUESTIONS = [
+  "Kata kabar berasal dari bahasa apa?",
+  "Tampilkan semua kata dari bahasa Arab",
+  "Akar kata dari kantor apa?",
+  "Kata gereja berasal dari bahasa apa?",
+  "Tampilkan semua kata dari bahasa Belanda",
+];
+
+function formatIntentLabel(intent: GraphRagResponse["intent"]) {
+  switch (intent) {
+    case "origin_of_word":
+      return "Origin of Word";
+    case "words_by_language":
+      return "Words by Language";
+    case "root_of_word":
+      return "Root of Word";
+    default:
+      return "Unknown";
+  }
+}
+
 export default function HomePage() {
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GraphRagResponse | null>(null);
+
+  const recordColumns = useMemo(() => {
+    if (!result || result.records.length === 0) return [];
+    return Object.keys(result.records[0]);
+  }, [result]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -40,9 +65,7 @@ export default function HomePage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          question,
-        }),
+        body: JSON.stringify({ question }),
       });
 
       const data = await response.json();
@@ -72,8 +95,7 @@ export default function HomePage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold tracking-tight">NusaKata</h1>
           <p className="mt-2 text-sm text-slate-600">
-            Prototype pencarian etimologi bahasa Indonesia berbasis Neo4j Aura, Next.js,
-            dan OpenRouter.
+            Prototype GraphRAG untuk eksplorasi etimologi bahasa Indonesia.
           </p>
         </div>
 
@@ -81,7 +103,8 @@ export default function HomePage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
             <h2 className="text-lg font-semibold">Input Pertanyaan</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Tanyakan asal bahasa dari kata yang tersedia di database.
+              Gunakan pertanyaan tentang asal bahasa, daftar kata berdasarkan bahasa,
+              atau akar kata.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-4 space-y-4">
@@ -93,7 +116,7 @@ export default function HomePage() {
                   id="question"
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
-                  placeholder='Contoh: Kata "kabar" berasal dari bahasa apa?'
+                  placeholder='Contoh: Tampilkan semua kata dari bahasa Arab'
                   className="min-h-[120px] w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                 />
               </div>
@@ -103,48 +126,23 @@ export default function HomePage() {
                 disabled={loading}
                 className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {loading ? "Memproses..." : "Tanyakan ke GraphRAG"}
+                {loading ? "Memproses..." : "Tanyakan ke NusaKata"}
               </button>
             </form>
 
             <div className="mt-6">
               <p className="mb-3 text-sm font-medium">Contoh cepat</p>
               <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => fillExample("Kata kabar berasal dari bahasa apa?")}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
-                >
-                  kabar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillExample("Kata kursi berasal dari bahasa apa?")}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
-                >
-                  kursi
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillExample("Kata kantor berasal dari bahasa apa?")}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
-                >
-                  kantor
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillExample("Kata gereja berasal dari bahasa apa?")}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
-                >
-                  gereja
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillExample("Kata agama berasal dari bahasa apa?")}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
-                >
-                  agama
-                </button>
+                {EXAMPLE_QUESTIONS.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => fillExample(example)}
+                    className="rounded-full border border-slate-300 px-3 py-1.5 text-xs hover:bg-slate-100"
+                  >
+                    {example}
+                  </button>
+                ))}
               </div>
             </div>
           </section>
@@ -180,13 +178,31 @@ export default function HomePage() {
                     <p className="mt-1 text-sm">{result.question}</p>
                   </div>
 
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-500">
-                      Kata Terdeteksi
-                    </p>
-                    <p className="mt-1 text-sm">
-                      {result.detectedWord ?? "Tidak ada kata yang dikenali"}
-                    </p>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">
+                        Intent
+                      </p>
+                      <p className="mt-1 text-sm">{formatIntentLabel(result.intent)}</p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">
+                        Kata Terdeteksi
+                      </p>
+                      <p className="mt-1 text-sm">
+                        {result.detectedWord ?? "Tidak ada"}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">
+                        Bahasa Terdeteksi
+                      </p>
+                      <p className="mt-1 text-sm">
+                        {result.detectedLanguage ?? "Tidak ada"}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="rounded-xl bg-slate-50 p-4">
@@ -225,19 +241,24 @@ export default function HomePage() {
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="px-4 py-3 text-left font-medium text-slate-600">
-                          Word
-                        </th>
-                        <th className="px-4 py-3 text-left font-medium text-slate-600">
-                          Origin Language
-                        </th>
+                        {recordColumns.map((column) => (
+                          <th
+                            key={column}
+                            className="px-4 py-3 text-left font-medium text-slate-600"
+                          >
+                            {column}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {result.records.map((record, index) => (
-                        <tr key={`${record.word}-${index}`}>
-                          <td className="px-4 py-3">{record.word}</td>
-                          <td className="px-4 py-3">{record.origin_language}</td>
+                        <tr key={index}>
+                          {recordColumns.map((column) => (
+                            <td key={`${index}-${column}`} className="px-4 py-3">
+                              {record[column] ?? "-"}
+                            </td>
+                          ))}
                         </tr>
                       ))}
                     </tbody>

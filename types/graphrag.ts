@@ -9,20 +9,28 @@ export const AskGraphSchema = z.object({
 
 export type AskGraphRequest = z.infer<typeof AskGraphSchema>;
 
-export const SimpleGraphResultSchema = z.object({
-  word: z.string(),
-  origin_language: z.string(),
-});
+export const GraphIntentSchema = z.enum([
+  "origin_of_word",
+  "words_by_language",
+  "root_of_word",
+  "unknown",
+]);
 
-export type SimpleGraphResult = z.infer<typeof SimpleGraphResultSchema>;
+export type GraphIntent = z.infer<typeof GraphIntentSchema>;
+
+export const GenericRecordSchema = z.record(z.string(), z.string());
+
+export type GenericRecord = z.infer<typeof GenericRecordSchema>;
 
 export const GraphRagResponseSchema = z.object({
   ok: z.boolean(),
   question: z.string(),
+  intent: GraphIntentSchema,
   detectedWord: z.string().nullable(),
+  detectedLanguage: z.string().nullable(),
   cypher: z.string().nullable(),
   answer: z.string(),
-  records: z.array(SimpleGraphResultSchema).default([]),
+  records: z.array(GenericRecordSchema).default([]),
   logs: z.array(z.string()).default([]),
 });
 
