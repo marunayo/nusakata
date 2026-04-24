@@ -11,10 +11,7 @@ type RefineCypherArgs = {
 };
 
 function extractCypher(text: string): string {
-  return text
-    .replace(/```cypher/gi, "")
-    .replace(/```/g, "")
-    .trim();
+  return text.replace(/```cypher/gi, "").replace(/```/g, "").trim();
 }
 
 /**
@@ -45,18 +42,20 @@ Do not use markdown unless absolutely necessary.
 Do not add commentary before or after the query.
 
 Schema:
-- (:Word { lemma, meaning })
+- (:Word { lemma, meaning, historicalPeriod, notes, sourceReference })
 - (:Language { name, family })
 - (:RootForm { form, gloss })
 
 Relationships:
 - (:Word)-[:ORIGIN_LANGUAGE]->(:Language)
 - (:Word)-[:DERIVED_FROM]->(:RootForm)
+- (:Word)-[:BORROWED_FROM]->(:RootForm)
+- (:Word)-[:COGNATE_WITH]->(:RootForm)
 
 Preferred return fields:
-- origin_of_word -> word, root_form, origin_language
-- words_by_language -> word, root_form, origin_language
-- root_of_word -> word, root_form, gloss
+- origin_of_word -> word, root_form, origin_language, relation_type
+- words_by_language -> word, root_form, origin_language, relation_type
+- root_of_word -> word, root_form, gloss, relation_type
 
 Use parameters if relevant:
 - $word

@@ -1,171 +1,217 @@
+import { GenericRecord, GraphIntent } from "@/types/graphrag";
+
 /**
  * Tahap: Graph Building Utility
- * Peran: Mengubah records menjadi node dan edge untuk Cytoscape.
- * Input: Intent dan records hasil query.
- * Output: Struktur graph yang siap divisualisasikan.
- *
- * Penjelasan:
- * File ini berisi logic pembentukan graph visual.
- * Bentuk graph yang dihasilkan bisa berbeda tergantung intent,
- * misalnya:
- * - word -> language,
- * - word -> root form -> language,
- * - atau word -> root form.
- *
- * Untuk beberapa kasus, file ini juga membuat inferensi visual
- * agar relasi etimologi lebih mudah dipahami saat ditampilkan.
+ * Peran: Mengubah records hasil query menjadi node dan edge untuk Cytoscape.
+ * Input: intent GraphRAG dan records hasil query.
+ * Output: payload graph berisi nodes dan edges.
  */
-import {
-  GraphElements,
-  GraphIntent,
-  GenericRecord,
-  GraphElementsSchema,
-} from "@/types/graphrag";
 
-// Fungsi ini mengubah records hasil query menjadi graph.
-// Bentuk graph berbeda tergantung intent:
-// - origin_of_word,
-// - words_by_language,
-// - root_of_word.
-function makeNode(id: string, label: string, type: string) {
+export type CytoscapeNode = {
+  data: {
+    id: string;
+    label: string;
+    type: "word" | "root_form" | "language";
+  };
+};
+
+export type CytoscapeEdge = {
+  data: {
+    id: string;
+    source: string;
+    target: string;
+    label: string;
+  };
+};
+
+type GraphPayload = {
+  nodes: CytoscapeNode[];
+  edges: CytoscapeEdge[];
+};
+
+function safeId(prefix: string, value: string) {
+  return `${prefix}:${value}`;
+}
+
+function relationLabel(type?: string) {
+  switch (type) {
+    case "BORROWED_FROM":
+      return "BORROWED_FROM";
+    case "COGNATE_WITH":
+      return "COGNATE_WITH";
+    case "DERIVED_FROM":
+    default:
+      return "DERIVED_FROM";
+  }
+}
+
+function addNode(
+  nodeMap: Map<string, CytoscapeNode>,
+  id: string,
+  label: string,
+  type: CytoscapeNode["data"]["type"]
+) {
+  if (!nodeMap.has(id)) {
+    nodeMap.set(id, {
+      data: {
+        id,
+        label,
+        type,
+      },
+    });
+  }
+}
+
+function addEdge(
+  edgeMap: Map<string, CytoscapeEdge>,
+  source: string,
+  target: string,
+  label: string
+) {
+  const id = `${source}->${target}:${label}`;
+
+  if (!edgeMap.has(id)) {
+    edgeMap.set(id, {
+      data: {
+        id,
+        source,
+        target,
+        label,
+      },
+    });
+  }
+}
+
+function buildOriginOfWordGraph(records: GenericRecord[]): GraphPayload {
+  const nodeMap = new Map<string, CytoscapeNode>();
+  const edgeMap = new Map<string, CytoscapeEdge>();
+
+  for (const record of records) {
+    const word = record.word;
+    const rootForm = record.root_form;
+    const language = record.origin_language;
+    const relationType = relationLabel(record.relation_type);
+
+    if (!word) continue;
+
+    const wordId = safeId("word", word);
+    addNode(nodeMap, wordId, word, "word");
+
+    if (rootForm && rootForm.toLowerCase() !== word.toLowerCase()) {
+      const rootId = safeId("root", rootForm);
+      addNode(nodeMap, rootId, rootForm, "root_form");
+      addEdge(edgeMap, wordId, rootId, relationType);
+
+      if (language) {
+        const languageId = safeId("language", language);
+        addNode(nodeMap, languageId, language, "language");
+        addEdge(edgeMap, rootId, languageId, "ORIGIN_LANGUAGE");
+      }
+    } else if (language) {
+      const languageId = safeId("language", language);
+      addNode(nodeMap, languageId, language, "language");
+      addEdge(edgeMap, wordId, languageId, "ORIGIN_LANGUAGE");
+    }
+  }
+
   return {
-    data: {
-      id,
-      label,
-      type,
-    },
+    nodes: Array.from(nodeMap.values()),
+    edges: Array.from(edgeMap.values()),
   };
 }
 
-function makeEdge(id: string, source: string, target: string, label: string) {
+function buildWordsByLanguageGraph(records: GenericRecord[]): GraphPayload {
+  const nodeMap = new Map<string, CytoscapeNode>();
+  const edgeMap = new Map<string, CytoscapeEdge>();
+
+  for (const record of records) {
+    const word = record.word;
+    const rootForm = record.root_form;
+    const language = record.origin_language;
+    const relationType = relationLabel(record.relation_type);
+
+    if (!word || !language) continue;
+
+    const wordId = safeId("word", word);
+    const languageId = safeId("language", language);
+
+    addNode(nodeMap, wordId, word, "word");
+    addNode(nodeMap, languageId, language, "language");
+
+    if (rootForm && rootForm.toLowerCase() !== word.toLowerCase()) {
+      const rootId = safeId("root", rootForm);
+      addNode(nodeMap, rootId, rootForm, "root_form");
+      addEdge(edgeMap, wordId, rootId, relationType);
+      addEdge(edgeMap, rootId, languageId, "ORIGIN_LANGUAGE");
+    } else {
+      addEdge(edgeMap, wordId, languageId, "ORIGIN_LANGUAGE");
+    }
+  }
+
   return {
-    data: {
-      id,
-      source,
-      target,
-      label,
-    },
+    nodes: Array.from(nodeMap.values()),
+    edges: Array.from(edgeMap.values()),
   };
 }
 
-function isSameForm(a?: string, b?: string) {
-  if (!a || !b) return false;
-  return a.toLowerCase() === b.toLowerCase();
+function buildRootOfWordGraph(records: GenericRecord[]): GraphPayload {
+  const nodeMap = new Map<string, CytoscapeNode>();
+  const edgeMap = new Map<string, CytoscapeEdge>();
+
+  for (const record of records) {
+    const word = record.word;
+    const rootForm = record.root_form;
+    const relationType = relationLabel(record.relation_type);
+
+    if (!word || !rootForm) continue;
+
+    const wordId = safeId("word", word);
+    addNode(nodeMap, wordId, word, "word");
+
+    if (rootForm.toLowerCase() === word.toLowerCase()) {
+      continue;
+    }
+
+    const rootId = safeId("root", rootForm);
+    addNode(nodeMap, rootId, rootForm, "root_form");
+    addEdge(edgeMap, wordId, rootId, relationType);
+  }
+
+  return {
+    nodes: Array.from(nodeMap.values()),
+    edges: Array.from(edgeMap.values()),
+  };
 }
 
+/**
+ * Fungsi utama pembentuk graph.
+ * Sistem memilih strategi pembentukan graph berdasarkan intent.
+ */
 export function buildGraphFromRecords(
   intent: GraphIntent,
   records: GenericRecord[]
-): GraphElements {
-  const nodesMap = new Map<string, ReturnType<typeof makeNode>>();
-  const edgesMap = new Map<string, ReturnType<typeof makeEdge>>();
-
-  if (intent === "origin_of_word") {
-    records.forEach((record, index) => {
-      const word = record.word;
-      const rootForm = record.root_form;
-      const language = record.origin_language;
-
-      if (!word) return;
-
-      const wordId = `word:${word}`;
-      nodesMap.set(wordId, makeNode(wordId, word, "Word"));
-
-      const hasDistinctRoot = rootForm && !isSameForm(word, rootForm);
-
-      if (hasDistinctRoot) {
-        const rootId = `root:${rootForm}`;
-        nodesMap.set(rootId, makeNode(rootId, rootForm!, "RootForm"));
-
-        const derivedEdgeId = `edge:derived:${word}:${rootForm}:${index}`;
-        edgesMap.set(
-          derivedEdgeId,
-          makeEdge(derivedEdgeId, wordId, rootId, "DERIVED_FROM")
-        );
-
-        if (language) {
-          const languageId = `language:${language}`;
-          nodesMap.set(languageId, makeNode(languageId, language, "Language"));
-
-          const originEdgeId = `edge:origin:${rootForm}:${language}:${index}`;
-          edgesMap.set(
-            originEdgeId,
-            makeEdge(originEdgeId, rootId, languageId, "ORIGIN_LANGUAGE")
-          );
-        }
-      } else if (language) {
-        const languageId = `language:${language}`;
-        nodesMap.set(languageId, makeNode(languageId, language, "Language"));
-
-        const edgeId = `edge:origin:${word}:${language}:${index}`;
-        edgesMap.set(
-          edgeId,
-          makeEdge(edgeId, wordId, languageId, "ORIGIN_LANGUAGE")
-        );
-      }
-    });
+): GraphPayload {
+  if (!records || records.length === 0) {
+    return {
+      nodes: [],
+      edges: [],
+    };
   }
 
-  if (intent === "words_by_language") {
-    records.forEach((record, index) => {
-      const word = record.word;
-      const rootForm = record.root_form;
-      const language = record.origin_language;
+  switch (intent) {
+    case "origin_of_word":
+      return buildOriginOfWordGraph(records);
 
-      if (!word || !language) return;
+    case "words_by_language":
+      return buildWordsByLanguageGraph(records);
 
-      const wordId = `word:${word}`;
-      const languageId = `language:${language}`;
+    case "root_of_word":
+      return buildRootOfWordGraph(records);
 
-      nodesMap.set(wordId, makeNode(wordId, word, "Word"));
-      nodesMap.set(languageId, makeNode(languageId, language, "Language"));
-
-      const hasDistinctRoot = rootForm && !isSameForm(word, rootForm);
-
-      if (hasDistinctRoot) {
-        const rootId = `root:${rootForm}`;
-        nodesMap.set(rootId, makeNode(rootId, rootForm!, "RootForm"));
-
-        const derivedEdgeId = `edge:derived:${word}:${rootForm}:${index}`;
-        const originEdgeId = `edge:origin:${rootForm}:${language}:${index}`;
-
-        edgesMap.set(
-          derivedEdgeId,
-          makeEdge(derivedEdgeId, wordId, rootId, "DERIVED_FROM")
-        );
-        edgesMap.set(
-          originEdgeId,
-          makeEdge(originEdgeId, rootId, languageId, "ORIGIN_LANGUAGE")
-        );
-      } else {
-        const edgeId = `edge:origin:${word}:${language}:${index}`;
-        edgesMap.set(
-          edgeId,
-          makeEdge(edgeId, wordId, languageId, "ORIGIN_LANGUAGE")
-        );
-      }
-    });
+    default:
+      return {
+        nodes: [],
+        edges: [],
+      };
   }
-
-  if (intent === "root_of_word") {
-    records.forEach((record, index) => {
-      const word = record.word;
-      const rootForm = record.root_form;
-
-      if (!word || !rootForm) return;
-
-      const wordId = `word:${word}`;
-      const rootId = `root:${rootForm}`;
-      const edgeId = `edge:root:${word}:${rootForm}:${index}`;
-
-      nodesMap.set(wordId, makeNode(wordId, word, "Word"));
-      nodesMap.set(rootId, makeNode(rootId, rootForm, "RootForm"));
-      edgesMap.set(edgeId, makeEdge(edgeId, wordId, rootId, "DERIVED_FROM"));
-    });
-  }
-
-  return GraphElementsSchema.parse({
-    nodes: Array.from(nodesMap.values()),
-    edges: Array.from(edgesMap.values()),
-  });
 }

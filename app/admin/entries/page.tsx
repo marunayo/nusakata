@@ -2,13 +2,19 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+type RelationType = "DERIVED_FROM" | "BORROWED_FROM" | "COGNATE_WITH";
+
 type EtymologyEntry = {
-  word: string;
+  lemma: string;
   meaning: string;
   rootForm: string;
-  gloss: string;
   originLanguage: string;
+  relationType: RelationType;
+  gloss: string;
   languageFamily: string;
+  historicalPeriod: string;
+  notes: string;
+  sourceReference: string;
 };
 
 type EntriesResponse = {
@@ -18,18 +24,22 @@ type EntriesResponse = {
 };
 
 const EMPTY_FORM: EtymologyEntry = {
-  word: "",
+  lemma: "",
   meaning: "",
   rootForm: "",
-  gloss: "",
   originLanguage: "",
+  relationType: "DERIVED_FROM",
+  gloss: "",
   languageFamily: "",
+  historicalPeriod: "",
+  notes: "",
+  sourceReference: "",
 };
 
 export default function AdminEntriesPage() {
   const [entries, setEntries] = useState<EtymologyEntry[]>([]);
   const [form, setForm] = useState<EtymologyEntry>(EMPTY_FORM);
-  const [editingWord, setEditingWord] = useState<string | null>(null);
+  const [editingLemma, setEditingLemma] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -79,14 +89,14 @@ export default function AdminEntriesPage() {
 
   function handleEdit(entry: EtymologyEntry) {
     setForm(entry);
-    setEditingWord(entry.word);
-    setMessage(`Mode edit aktif untuk kata "${entry.word}".`);
+    setEditingLemma(entry.lemma);
+    setMessage(`Mode edit aktif untuk lemma "${entry.lemma}".`);
     setError(null);
   }
 
   function resetForm() {
     setForm(EMPTY_FORM);
-    setEditingWord(null);
+    setEditingLemma(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -96,8 +106,8 @@ export default function AdminEntriesPage() {
     setError(null);
 
     try {
-      const isEdit = Boolean(editingWord);
-      const url = isEdit ? `/api/entries/${editingWord}` : "/api/entries";
+      const isEdit = Boolean(editingLemma);
+      const url = isEdit ? `/api/entries/${editingLemma}` : "/api/entries";
       const method = isEdit ? "PUT" : "POST";
 
       const response = await fetch(url, {
@@ -116,8 +126,8 @@ export default function AdminEntriesPage() {
 
       setMessage(
         isEdit
-          ? `Entri "${form.word}" berhasil diperbarui.`
-          : `Entri "${form.word}" berhasil ditambahkan.`
+          ? `Entri "${form.lemma}" berhasil diperbarui.`
+          : `Entri "${form.lemma}" berhasil ditambahkan.`
       );
 
       resetForm();
@@ -133,9 +143,9 @@ export default function AdminEntriesPage() {
     }
   }
 
-  async function handleDelete(word: string) {
+  async function handleDelete(lemma: string) {
     const confirmed = window.confirm(
-      `Apakah kamu yakin ingin menghapus entri "${word}"?`
+      `Apakah kamu yakin ingin menghapus entri "${lemma}"?`
     );
 
     if (!confirmed) return;
@@ -145,7 +155,7 @@ export default function AdminEntriesPage() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/entries/${word}`, {
+      const response = await fetch(`/api/entries/${lemma}`, {
         method: "DELETE",
       });
 
@@ -155,11 +165,11 @@ export default function AdminEntriesPage() {
         throw new Error(data.message || "Gagal menghapus entri.");
       }
 
-      if (editingWord === word) {
+      if (editingLemma === lemma) {
         resetForm();
       }
 
-      setMessage(`Entri "${word}" berhasil dihapus.`);
+      setMessage(`Entri "${lemma}" berhasil dihapus.`);
       await loadEntries();
     } catch (err) {
       const msg =
@@ -180,8 +190,7 @@ export default function AdminEntriesPage() {
             Admin Etymology Entries
           </h1>
           <p className="mt-2 text-sm text-slate-600">
-            Halaman ini digunakan untuk menambah, melihat, mengubah, dan
-            menghapus entri etimologi di NusaKata.
+            Halaman ini digunakan untuk mengelola entri etimologi di NusaKata.
           </p>
         </div>
 
@@ -204,55 +213,114 @@ export default function AdminEntriesPage() {
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
             <div className="mb-4">
               <h2 className="text-lg font-semibold">
-                {editingWord ? "Edit Entry" : "Tambah Entry"}
+                {editingLemma ? "Edit Entry" : "Tambah Entry"}
               </h2>
               <p className="mt-1 text-sm text-slate-600">
-                Isi data kata, root form, dan bahasa asalnya.
+                Komponen utama wajib diisi, komponen tambahan bersifat opsional.
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <InputField
-                label="Word"
-                value={form.word}
-                onChange={(value) => updateField("word", value)}
-                placeholder="contoh: kantor"
-              />
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  Komponen Utama
+                </h3>
 
-              <InputField
-                label="Meaning"
-                value={form.meaning}
-                onChange={(value) => updateField("meaning", value)}
-                placeholder="contoh: tempat kerja administratif"
-              />
+                <div className="space-y-4">
+                  <InputField
+                    label="Lemma"
+                    value={form.lemma}
+                    onChange={(value) => updateField("lemma", value)}
+                    placeholder="contoh: kantor"
+                  />
 
-              <InputField
-                label="Root Form"
-                value={form.rootForm}
-                onChange={(value) => updateField("rootForm", value)}
-                placeholder="contoh: kantoor"
-              />
+                  <InputField
+                    label="Meaning"
+                    value={form.meaning}
+                    onChange={(value) => updateField("meaning", value)}
+                    placeholder="contoh: tempat bekerja atau instansi"
+                  />
 
-              <InputField
-                label="Gloss"
-                value={form.gloss}
-                onChange={(value) => updateField("gloss", value)}
-                placeholder="contoh: office"
-              />
+                  <InputField
+                    label="Root Form"
+                    value={form.rootForm}
+                    onChange={(value) => updateField("rootForm", value)}
+                    placeholder="contoh: kantoor"
+                  />
 
-              <InputField
-                label="Origin Language"
-                value={form.originLanguage}
-                onChange={(value) => updateField("originLanguage", value)}
-                placeholder="contoh: Belanda"
-              />
+                  <InputField
+                    label="Origin Language"
+                    value={form.originLanguage}
+                    onChange={(value) => updateField("originLanguage", value)}
+                    placeholder="contoh: Belanda"
+                  />
 
-              <InputField
-                label="Language Family"
-                value={form.languageFamily}
-                onChange={(value) => updateField("languageFamily", value)}
-                placeholder="contoh: Indo-Eropa"
-              />
+                  <div>
+                    <label className="mb-2 block text-sm font-medium">
+                      Relation Type
+                    </label>
+                    <select
+                      value={form.relationType}
+                      onChange={(e) =>
+                        updateField(
+                          "relationType",
+                          e.target.value as RelationType
+                        )
+                      }
+                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="DERIVED_FROM">DERIVED_FROM</option>
+                      <option value="BORROWED_FROM">BORROWED_FROM</option>
+                      <option value="COGNATE_WITH">COGNATE_WITH</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  Komponen Tambahan
+                </h3>
+
+                <div className="space-y-4">
+                  <InputField
+                    label="Gloss"
+                    value={form.gloss}
+                    onChange={(value) => updateField("gloss", value)}
+                    placeholder="contoh: office"
+                  />
+
+                  <InputField
+                    label="Language Family"
+                    value={form.languageFamily}
+                    onChange={(value) => updateField("languageFamily", value)}
+                    placeholder="contoh: Indo-Eropa"
+                  />
+
+                  <InputField
+                    label="Historical Period"
+                    value={form.historicalPeriod}
+                    onChange={(value) =>
+                      updateField("historicalPeriod", value)
+                    }
+                    placeholder="contoh: masa kolonial"
+                  />
+
+                  <InputField
+                    label="Notes"
+                    value={form.notes}
+                    onChange={(value) => updateField("notes", value)}
+                    placeholder="catatan tambahan etimologis"
+                  />
+
+                  <InputField
+                    label="Source Reference"
+                    value={form.sourceReference}
+                    onChange={(value) => updateField("sourceReference", value)}
+                    placeholder="contoh: Kamus Etimologi Bahasa Indonesia"
+                  />
+                </div>
+              </div>
 
               <div className="flex gap-3 pt-2">
                 <button
@@ -262,7 +330,7 @@ export default function AdminEntriesPage() {
                 >
                   {loading
                     ? "Memproses..."
-                    : editingWord
+                    : editingLemma
                     ? "Simpan Perubahan"
                     : "Tambah Entry"}
                 </button>
@@ -310,24 +378,24 @@ export default function AdminEntriesPage() {
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead className="bg-slate-50">
                       <tr>
-                        <TableHead>Word</TableHead>
+                        <TableHead>Lemma</TableHead>
                         <TableHead>Root Form</TableHead>
+                        <TableHead>Relation</TableHead>
                         <TableHead>Origin Language</TableHead>
                         <TableHead>Meaning</TableHead>
-                        <TableHead>Gloss</TableHead>
-                        <TableHead>Family</TableHead>
+                        <TableHead>Period</TableHead>
                         <TableHead>Actions</TableHead>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 bg-white">
                       {entries.map((entry) => (
-                        <tr key={entry.word}>
-                          <TableCell>{entry.word}</TableCell>
+                        <tr key={entry.lemma}>
+                          <TableCell>{entry.lemma}</TableCell>
                           <TableCell>{entry.rootForm}</TableCell>
+                          <TableCell>{entry.relationType}</TableCell>
                           <TableCell>{entry.originLanguage}</TableCell>
-                          <TableCell>{entry.meaning || "-"}</TableCell>
-                          <TableCell>{entry.gloss || "-"}</TableCell>
-                          <TableCell>{entry.languageFamily || "-"}</TableCell>
+                          <TableCell>{entry.meaning}</TableCell>
+                          <TableCell>{entry.historicalPeriod || "-"}</TableCell>
                           <td className="px-4 py-3">
                             <div className="flex gap-2">
                               <button
@@ -339,7 +407,7 @@ export default function AdminEntriesPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void handleDelete(entry.word)}
+                                onClick={() => void handleDelete(entry.lemma)}
                                 className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
                               >
                                 Delete

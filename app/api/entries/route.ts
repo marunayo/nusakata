@@ -12,21 +12,37 @@ import {
  * Output: Response JSON berisi daftar entri atau hasil penambahan data.
  */
 
+function buildRootRelationMergeCypher(relationType: string) {
+  switch (relationType) {
+    case "BORROWED_FROM":
+      return `MERGE (w)-[:BORROWED_FROM]->(r)`;
+    case "COGNATE_WITH":
+      return `MERGE (w)-[:COGNATE_WITH]->(r)`;
+    case "DERIVED_FROM":
+    default:
+      return `MERGE (w)-[:DERIVED_FROM]->(r)`;
+  }
+}
+
 export async function GET() {
   const session = driver.session();
 
   try {
     const cypher = `
       MATCH (w:Word)
-      OPTIONAL MATCH (w)-[:DERIVED_FROM]->(r:RootForm)
+      OPTIONAL MATCH (w)-[rel]->(r:RootForm)
       OPTIONAL MATCH (w)-[:ORIGIN_LANGUAGE]->(l:Language)
       RETURN
-        w.lemma AS word,
+        w.lemma AS lemma,
         w.meaning AS meaning,
         r.form AS rootForm,
-        r.gloss AS gloss,
         l.name AS originLanguage,
-        l.family AS languageFamily
+        type(rel) AS relationType,
+        r.gloss AS gloss,
+        l.family AS languageFamily,
+        w.historicalPeriod AS historicalPeriod,
+        w.notes AS notes,
+        w.sourceReference AS sourceReference
       ORDER BY w.lemma
     `;
 
@@ -34,12 +50,16 @@ export async function GET() {
 
     const data = result.records.map((record) =>
       EtymologyEntrySchema.parse({
-        word: String(record.get("word") ?? ""),
+        lemma: String(record.get("lemma") ?? ""),
         meaning: String(record.get("meaning") ?? ""),
         rootForm: String(record.get("rootForm") ?? ""),
-        gloss: String(record.get("gloss") ?? ""),
         originLanguage: String(record.get("originLanguage") ?? ""),
+        relationType: String(record.get("relationType") ?? "DERIVED_FROM"),
+        gloss: String(record.get("gloss") ?? ""),
         languageFamily: String(record.get("languageFamily") ?? ""),
+        historicalPeriod: String(record.get("historicalPeriod") ?? ""),
+        notes: String(record.get("notes") ?? ""),
+        sourceReference: String(record.get("sourceReference") ?? ""),
       })
     );
 
@@ -85,10 +105,15 @@ export async function POST(req: NextRequest) {
     }
 
     const entry = parsed.data;
+    const relationMergeCypher = buildRootRelationMergeCypher(entry.relationType);
 
     const cypher = `
-      MERGE (w:Word {lemma: $word})
-      SET w.meaning = $meaning
+      MERGE (w:Word {lemma: $lemma})
+      SET
+        w.meaning = $meaning,
+        w.historicalPeriod = $historicalPeriod,
+        w.notes = $notes,
+        w.sourceReference = $sourceReference
 
       MERGE (r:RootForm {form: $rootForm})
       SET r.gloss = $gloss
@@ -96,16 +121,20 @@ export async function POST(req: NextRequest) {
       MERGE (l:Language {name: $originLanguage})
       SET l.family = $languageFamily
 
-      MERGE (w)-[:DERIVED_FROM]->(r)
+      ${relationMergeCypher}
       MERGE (w)-[:ORIGIN_LANGUAGE]->(l)
 
       RETURN
-        w.lemma AS word,
+        w.lemma AS lemma,
         w.meaning AS meaning,
         r.form AS rootForm,
-        r.gloss AS gloss,
         l.name AS originLanguage,
-        l.family AS languageFamily
+        $relationType AS relationType,
+        r.gloss AS gloss,
+        l.family AS languageFamily,
+        w.historicalPeriod AS historicalPeriod,
+        w.notes AS notes,
+        w.sourceReference AS sourceReference
     `;
 
     const result = await session.run(cypher, entry);
@@ -113,12 +142,16 @@ export async function POST(req: NextRequest) {
 
     const data = [
       EtymologyEntrySchema.parse({
-        word: String(record.get("word") ?? ""),
+        lemma: String(record.get("lemma") ?? ""),
         meaning: String(record.get("meaning") ?? ""),
         rootForm: String(record.get("rootForm") ?? ""),
-        gloss: String(record.get("gloss") ?? ""),
         originLanguage: String(record.get("originLanguage") ?? ""),
+        relationType: String(record.get("relationType") ?? "DERIVED_FROM"),
+        gloss: String(record.get("gloss") ?? ""),
         languageFamily: String(record.get("languageFamily") ?? ""),
+        historicalPeriod: String(record.get("historicalPeriod") ?? ""),
+        notes: String(record.get("notes") ?? ""),
+        sourceReference: String(record.get("sourceReference") ?? ""),
       }),
     ];
 

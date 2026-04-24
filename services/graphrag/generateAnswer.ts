@@ -1,20 +1,3 @@
-/**
- * Tahap: Answer Generation
- * Peran: Membentuk jawaban natural language dari hasil query.
- * Input: Intent, records hasil query, dan entity final.
- * Output: Jawaban akhir yang mudah dibaca user.
- *
- * Penjelasan:
- * Hasil query Neo4j masih berupa record terstruktur.
- * Karena itu, tahap ini dipakai untuk mengubahnya
- * menjadi jawaban dalam bahasa yang natural.
- *
- * Format jawaban akan menyesuaikan intent,
- * misalnya untuk:
- * - asal bahasa kata,
- * - daftar kata dari suatu bahasa,
- * - akar kata.
- */
 import { GraphIntent } from "@/types/graphrag";
 
 type BuildAnswerArgs = {
@@ -24,8 +7,24 @@ type BuildAnswerArgs = {
   language: string | null;
 };
 
-// Fungsi ini membentuk jawaban natural language
-// berdasarkan intent dan records hasil query.
+function relationLabel(relationType?: string): string {
+  switch (relationType) {
+    case "BORROWED_FROM":
+      return "dipinjam dari";
+    case "COGNATE_WITH":
+      return "berkognat dengan";
+    case "DERIVED_FROM":
+    default:
+      return "berasal dari";
+  }
+}
+
+/**
+ * Tahap: Answer Generation
+ * Peran: Membentuk jawaban natural language dari hasil query.
+ * Input: intent, records hasil query, dan entity final.
+ * Output: Jawaban akhir yang mudah dibaca user.
+ */
 export function buildNaturalAnswer({
   intent,
   records,
@@ -52,16 +51,22 @@ export function buildNaturalAnswer({
     const resultWord = records[0].word;
     const rootForm = records[0].root_form;
     const originLanguage = records[0].origin_language;
+    const relationType = records[0].relation_type;
+    const relText = relationLabel(relationType);
 
     if (
       rootForm &&
       resultWord &&
       rootForm.toLowerCase() !== resultWord.toLowerCase()
     ) {
-      return `Kata "${resultWord}" berasal dari kata "${rootForm}" yang berasal dari bahasa ${originLanguage}.`;
+      if (relationType === "COGNATE_WITH") {
+        return `Kata "${resultWord}" berkognat dengan "${rootForm}" dan berhubungan dengan bahasa ${originLanguage}.`;
+      }
+
+      return `Kata "${resultWord}" ${relText} kata "${rootForm}" yang berhubungan dengan bahasa ${originLanguage}.`;
     }
 
-    return `Kata "${resultWord}" berasal dari bahasa ${originLanguage}.`;
+    return `Kata "${resultWord}" berhubungan dengan bahasa ${originLanguage}.`;
   }
 
   if (intent === "words_by_language") {
@@ -82,7 +87,14 @@ export function buildNaturalAnswer({
   }
 
   if (intent === "root_of_word") {
-    return `Akar kata dari "${records[0].word}" adalah "${records[0].root_form}" yang bermakna "${records[0].gloss}".`;
+    const relationType = records[0].relation_type;
+    const relText = relationLabel(relationType);
+
+    if (relationType === "COGNATE_WITH") {
+      return `Kata "${records[0].word}" berkognat dengan "${records[0].root_form}" yang bermakna "${records[0].gloss}".`;
+    }
+
+    return `Kata "${records[0].word}" ${relText} "${records[0].root_form}" yang bermakna "${records[0].gloss}".`;
   }
 
   return "Jawaban berhasil dibuat.";

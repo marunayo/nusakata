@@ -1,23 +1,17 @@
+import driver from "@/lib/neo4j";
+import { GenericRecordSchema } from "@/types/graphrag";
+
 /**
  * Tahap: Query Execution
  * Peran: Menjalankan query Cypher ke Neo4j.
  * Input: Query Cypher dan parameter query.
- * Output: Records hasil eksekusi query.
+ * Output: Records hasil eksekusi query dalam format sederhana.
  *
  * Penjelasan:
- * File ini hanya fokus pada proses akses database.
- * Query yang sudah dipilih akan dijalankan ke Neo4j,
- * lalu hasilnya diubah ke format record sederhana
- * agar mudah diproses oleh tahap berikutnya.
- *
- * Pemisahan tahap ini membuat logika database
- * tidak bercampur dengan logic intent atau jawaban.
+ * Semua value dari Neo4j dinormalisasi menjadi string
+ * agar tetap kompatibel dengan schema record GraphRAG
+ * yang fleksibel.
  */
-import driver from "@/lib/neo4j";
-import { GenericRecordSchema } from "@/types/graphrag";
-
-// Fungsi ini menjalankan query Cypher ke Neo4j
-// dan mengubah hasilnya ke format record sederhana.
 export async function executeGraphQuery(
   cypher: string,
   params: Record<string, string>
@@ -31,7 +25,10 @@ export async function executeGraphQuery(
       const row = record.toObject();
 
       const normalized = Object.fromEntries(
-        Object.entries(row).map(([key, value]) => [key, String(value)])
+        Object.entries(row).map(([key, value]) => [
+          key,
+          value == null ? "" : String(value),
+        ])
       );
 
       return GenericRecordSchema.parse(normalized);

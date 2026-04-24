@@ -9,10 +9,7 @@ type GenerateDynamicCypherArgs = {
 };
 
 function extractCypher(text: string): string {
-  return text
-    .replace(/```cypher/gi, "")
-    .replace(/```/g, "")
-    .trim();
+  return text.replace(/```cypher/gi, "").replace(/```/g, "").trim();
 }
 
 /**
@@ -42,26 +39,28 @@ Do not return markdown unless absolutely necessary.
 Do not add commentary before or after the query.
 
 Graph schema:
-- (:Word { lemma, meaning })
+- (:Word { lemma, meaning, historicalPeriod, notes, sourceReference })
 - (:Language { name, family })
 - (:RootForm { form, gloss })
 
 Relationships:
 - (:Word)-[:ORIGIN_LANGUAGE]->(:Language)
 - (:Word)-[:DERIVED_FROM]->(:RootForm)
+- (:Word)-[:BORROWED_FROM]->(:RootForm)
+- (:Word)-[:COGNATE_WITH]->(:RootForm)
 
 Intent meanings:
 - origin_of_word:
-  find the word, its root form if available, and its origin language
+  find the word, its root form if available, its relation type, and its origin language
 - words_by_language:
   find all words from a specific language, and root form if available
 - root_of_word:
-  find the root form and gloss of a word
+  find the root form, gloss, and relation type of a word
 
 Preferred return fields:
-- origin_of_word -> word, root_form, origin_language
-- words_by_language -> word, root_form, origin_language
-- root_of_word -> word, root_form, gloss
+- origin_of_word -> word, root_form, origin_language, relation_type
+- words_by_language -> word, root_form, origin_language, relation_type
+- root_of_word -> word, root_form, gloss, relation_type
 
 Use parameters if relevant:
 - $word

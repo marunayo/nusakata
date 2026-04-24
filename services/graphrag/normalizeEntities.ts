@@ -1,32 +1,25 @@
+import { normalizeLanguage, normalizeWord } from "@/lib/entityNormalization";
+
 /**
  * Tahap: Entity Normalization
  * Peran: Merapikan entity hasil parsing agar cocok dengan data sistem.
- * Input: detectedWord dan detectedLanguage dari tahap intent parsing.
+ * Input: detectedWord, detectedLanguage, serta kandidat word/language dari DB.
  * Output: Entity final yang siap dipakai pada query.
- *
- * Penjelasan:
- * Hasil parsing awal belum tentu langsung cocok dengan data.
- * Karena itu, tahap ini dipakai untuk:
- * - merapikan huruf besar/kecil,
- * - memperbaiki typo ringan,
- * - mencocokkan entity dengan daftar yang dikenali sistem.
- *
- * Tahap ini penting agar query ke database menjadi lebih stabil.
  */
-import { normalizeLanguage, normalizeWord } from "@/lib/entityNormalization";
 
-// Fungsi ini menerima entity hasil deteksi awal,
-// lalu mencoba menormalkannya agar lebih cocok dengan data yang tersedia.
-// Selain hasil normalisasi, fungsi ini juga mengembalikan logs
-// agar prosesnya mudah ditelusuri.
 export function normalizeDetectedEntities(
   detectedWord: string | null,
-  detectedLanguage: string | null
+  detectedLanguage: string | null,
+  availableWords: string[] = [],
+  availableLanguages: string[] = []
 ) {
   const logs: string[] = [];
 
-  const normalizedWordResult = normalizeWord(detectedWord);
-  const normalizedLanguageResult = normalizeLanguage(detectedLanguage);
+  const normalizedWordResult = normalizeWord(detectedWord, availableWords);
+  const normalizedLanguageResult = normalizeLanguage(
+    detectedLanguage,
+    availableLanguages
+  );
 
   if (detectedWord) {
     if (normalizedWordResult.matched) {

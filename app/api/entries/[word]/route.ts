@@ -5,9 +5,21 @@ import { EtymologyEntrySchema } from "@/types/entry";
 /**
  * Tahap: Single Entry API
  * Peran: Menangani update dan delete untuk satu entri etimologi.
- * Input: Parameter word pada URL dan payload request.
+ * Input: Parameter lemma pada URL dan payload request.
  * Output: Response JSON hasil update atau delete.
  */
+
+function buildRootRelationMergeCypher(relationType: string) {
+  switch (relationType) {
+    case "BORROWED_FROM":
+      return `MERGE (w)-[:BORROWED_FROM]->(r)`;
+    case "COGNATE_WITH":
+      return `MERGE (w)-[:COGNATE_WITH]->(r)`;
+    case "DERIVED_FROM":
+    default:
+      return `MERGE (w)-[:DERIVED_FROM]->(r)`;
+  }
+}
 
 export async function PUT(
   req: NextRequest,
@@ -16,7 +28,7 @@ export async function PUT(
   const session = driver.session();
 
   try {
-    const { word: currentWord } = await context.params;
+    const { word: currentLemma } = await context.params;
     const body = await req.json();
     const parsed = EtymologyEntrySchema.safeParse(body);
 
@@ -32,15 +44,20 @@ export async function PUT(
     }
 
     const entry = parsed.data;
+    const relationMergeCypher = buildRootRelationMergeCypher(entry.relationType);
 
     const cypher = `
-      MATCH (w:Word {lemma: $currentWord})
-      OPTIONAL MATCH (w)-[d:DERIVED_FROM]->(:RootForm)
-      OPTIONAL MATCH (w)-[o:ORIGIN_LANGUAGE]->(:Language)
-      DELETE d, o
+      MATCH (w:Word {lemma: $currentLemma})
+      OPTIONAL MATCH (w)-[relToRoot]->(:RootForm)
+      OPTIONAL MATCH (w)-[relToLang:ORIGIN_LANGUAGE]->(:Language)
+      DELETE relToRoot, relToLang
 
-      SET w.lemma = $word,
-          w.meaning = $meaning
+      SET
+        w.lemma = $lemma,
+        w.meaning = $meaning,
+        w.historicalPeriod = $historicalPeriod,
+        w.notes = $notes,
+        w.sourceReference = $sourceReference
 
       MERGE (r:RootForm {form: $rootForm})
       SET r.gloss = $gloss
@@ -48,20 +65,15 @@ export async function PUT(
       MERGE (l:Language {name: $originLanguage})
       SET l.family = $languageFamily
 
-      MERGE (w)-[:DERIVED_FROM]->(r)
+      ${relationMergeCypher}
       MERGE (w)-[:ORIGIN_LANGUAGE]->(l)
 
       RETURN
-        w.lemma AS word,
-        w.meaning AS meaning,
-        r.form AS rootForm,
-        r.gloss AS gloss,
-        l.name AS originLanguage,
-        l.family AS languageFamily
+        w.lemma AS lemma
     `;
 
     const result = await session.run(cypher, {
-      currentWord,
+      currentLemma,
       ...entry,
     });
 
@@ -101,17 +113,17 @@ export async function DELETE(
   const session = driver.session();
 
   try {
-    const { word } = await context.params;
+    const { word: lemma } = await context.params;
 
     const cypher = `
-      MATCH (w:Word {lemma: $word})
-      OPTIONAL MATCH (w)-[d:DERIVED_FROM]->(:RootForm)
-      OPTIONAL MATCH (w)-[o:ORIGIN_LANGUAGE]->(:Language)
-      DELETE d, o
+      MATCH (w:Word {lemma: $lemma})
+      OPTIONAL MATCH (w)-[relToRoot]->(:RootForm)
+      OPTIONAL MATCH (w)-[relToLang:ORIGIN_LANGUAGE]->(:Language)
+      DELETE relToRoot, relToLang
       DELETE w
     `;
 
-    await session.run(cypher, { word });
+    await session.run(cypher, { lemma });
 
     return NextResponse.json({
       ok: true,

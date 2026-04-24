@@ -7,6 +7,10 @@ import { buildNaturalAnswer } from "@/services/graphrag/generateAnswer";
 import { buildGraphPayload } from "@/services/graphrag/buildGraph";
 import { generateDynamicCypher } from "@/services/graphrag/generateDynamicCypher";
 import { refineCypher } from "@/services/graphrag/refineCypher";
+import {
+  getLanguageCatalogFromDb,
+  getWordCatalogFromDb,
+} from "@/lib/entityCatalog";
 import { GraphIntent } from "@/types/graphrag";
 
 const KNOWN_WORDS = ["kabar", "kursi", "kantor", "gereja", "agama"];
@@ -18,28 +22,43 @@ const KNOWN_LANGUAGES = ["Arab", "Belanda", "Portugis", "Sanskerta"];
 // - "error" : query dinamis awal sengaja dibuat syntax error
 const DEMO_MODE: "off" | "empty" | "error" = "off";
 
-function detectWordFromQuestion(question: string): string | null {
-  const normalized = question.toLowerCase();
+function detectEntityFromQuestion(
+  question: string,
+  candidates: string[]
+): string | null {
+  const normalizedQuestion = question.toLowerCase();
 
-  for (const word of KNOWN_WORDS) {
-    if (normalized.includes(word)) return word;
+  for (const candidate of candidates) {
+    if (normalizedQuestion.includes(candidate.toLowerCase())) {
+      return candidate;
+    }
   }
 
   return null;
 }
 
-function detectLanguageFromQuestion(question: string): string | null {
-  const normalized = question.toLowerCase();
+async function detectWordFromQuestion(question: string): Promise<string | null> {
+  const dbWords = await getWordCatalogFromDb();
+  const combinedCandidates = Array.from(new Set([...KNOWN_WORDS, ...dbWords]));
 
-  for (const language of KNOWN_LANGUAGES) {
-    if (normalized.includes(language.toLowerCase())) return language;
-  }
-
-  return null;
+  return detectEntityFromQuestion(question, combinedCandidates);
 }
 
-function detectIntentRuleBased(question: string): GraphIntent {
+async function detectLanguageFromQuestion(
+  question: string
+): Promise<string | null> {
+  const dbLanguages = await getLanguageCatalogFromDb();
+  const combinedCandidates = Array.from(
+    new Set([...KNOWN_LANGUAGES, ...dbLanguages])
+  );
+
+  return detectEntityFromQuestion(question, combinedCandidates);
+}
+
+async function detectIntentRuleBased(question: string): Promise<GraphIntent> {
   const normalized = question.toLowerCase();
+  const detectedWord = await detectWordFromQuestion(question);
+  const detectedLanguage = await detectLanguageFromQuestion(question);
 
   if (
     (normalized.includes("berasal dari bahasa apa") ||
@@ -48,7 +67,7 @@ function detectIntentRuleBased(question: string): GraphIntent {
       normalized.includes("bahasa asal") ||
       normalized.includes("bahasa asalnya") ||
       normalized.includes("relasi kata")) &&
-    detectWordFromQuestion(question)
+    detectedWord
   ) {
     return "origin_of_word";
   }
@@ -59,7 +78,7 @@ function detectIntentRuleBased(question: string): GraphIntent {
       normalized.includes("kata apa saja") ||
       normalized.includes("kasih semua kata")) &&
     normalized.includes("bahasa") &&
-    detectLanguageFromQuestion(question)
+    detectedLanguage
   ) {
     return "words_by_language";
   }
@@ -69,7 +88,7 @@ function detectIntentRuleBased(question: string): GraphIntent {
       normalized.includes("root") ||
       normalized.includes("kata dasar") ||
       normalized.includes("turunan dari")) &&
-    detectWordFromQuestion(question)
+    detectedWord
   ) {
     return "root_of_word";
   }
@@ -120,10 +139,10 @@ export async function runGraphRag(question: string) {
     console.error("Intent parsing failed:", error);
 
     // Jika parsing semantik gagal, sistem memakai fallback rule-based
-    // agar aplikasi tetap bisa merespons.
-    intent = detectIntentRuleBased(question);
-    detectedWord = detectWordFromQuestion(question);
-    detectedLanguage = detectLanguageFromQuestion(question);
+    // yang juga dibantu catalog dari database.
+    intent = await detectIntentRuleBased(question);
+    detectedWord = await detectWordFromQuestion(question);
+    detectedLanguage = await detectLanguageFromQuestion(question);
 
     logs.push("Intent parsing failed, switched to rule-based fallback");
   }
@@ -132,10 +151,26 @@ export async function runGraphRag(question: string) {
   logs.push(`Detected word: ${detectedWord ?? "none"}`);
   logs.push(`Detected language: ${detectedLanguage ?? "none"}`);
 
-  // Tahap 2: normalisasi entity.
+  // Tahap 2: muat catalog entity dari database agar
+  // data baru hasil CRUD ikut dikenali oleh proses normalisasi.
+  const [wordCatalog, languageCatalog] = await Promise.all([
+    getWordCatalogFromDb(),
+    getLanguageCatalogFromDb(),
+  ]);
+
+  logs.push(
+    `Entity catalog loaded: ${wordCatalog.length} words, ${languageCatalog.length} languages`
+  );
+
+  // Tahap 3: normalisasi entity.
   // Di sini sistem merapikan kata/bahasa yang terdeteksi,
-  // termasuk perbedaan huruf besar-kecil dan typo ringan.
-  const normalized = normalizeDetectedEntities(detectedWord, detectedLanguage);
+  // termasuk typo ringan, dengan bantuan daftar lokal + catalog DB.
+  const normalized = normalizeDetectedEntities(
+    detectedWord,
+    detectedLanguage,
+    wordCatalog,
+    languageCatalog
+  );
 
   detectedWord = normalized.word;
   detectedLanguage = normalized.language;
@@ -160,7 +195,7 @@ export async function runGraphRag(question: string) {
     };
   }
 
-  // Tahap 3: menyiapkan query template sebagai fallback aman.
+  // Tahap 4: menyiapkan query template sebagai fallback aman.
   const templateCypher = selectQueryTemplate(intent);
   let cypher = templateCypher;
 
@@ -168,8 +203,7 @@ export async function runGraphRag(question: string) {
   if (detectedWord) params.word = detectedWord;
   if (detectedLanguage) params.language = detectedLanguage;
 
-  // Tahap 4: mencoba membangkitkan query dinamis dengan bantuan LLM.
-  // Jika tahap ini gagal, sistem kembali ke template query.
+  // Tahap 5: mencoba membangkitkan query dinamis dengan bantuan LLM.
   try {
     cypher = await generateDynamicCypher({
       intent,
@@ -202,7 +236,7 @@ export async function runGraphRag(question: string) {
     logs.push("Demo mode active: forced malformed dynamic query");
   }
 
-  // Tahap 5: eksekusi query dinamis atau template.
+  // Tahap 6: eksekusi query dinamis atau template.
   let execution;
   const usedDynamicQuery = cypher !== templateCypher;
 
@@ -271,7 +305,6 @@ export async function runGraphRag(question: string) {
       } catch (refineError) {
         console.error("Dynamic Cypher refinement execution failed:", refineError);
 
-        // Jika refinement juga gagal, sistem kembali ke template query.
         cypher = templateCypher;
         logs.push("Refinement failed, switched to template query");
 
@@ -279,12 +312,11 @@ export async function runGraphRag(question: string) {
         logs.push(`Template query executed, records: ${execution.records.length}`);
       }
     } else {
-      // Jika sejak awal memakai template dan tetap error, lempar ulang.
       throw error;
     }
   }
 
-  // Tahap 6: jika hasil masih kosong, coba fallback resolution berbasis entity.
+  // Tahap 7: jika hasil masih kosong, coba fallback resolution berbasis entity.
   if (execution.records.length === 0) {
     const retried = await retryQueryWithFallback({
       cypher,
@@ -300,7 +332,7 @@ export async function runGraphRag(question: string) {
     detectedLanguage = retried.detectedLanguage;
   }
 
-  // Tahap 7: membentuk jawaban akhir berdasarkan records hasil query.
+  // Tahap 8: membentuk jawaban akhir berdasarkan records hasil query.
   const answer = buildNaturalAnswer({
     intent,
     records: execution.records,
@@ -309,7 +341,7 @@ export async function runGraphRag(question: string) {
   });
   logs.push("Answer generated successfully");
 
-  // Tahap 8: membentuk graph payload untuk divisualisasikan di Cytoscape.
+  // Tahap 9: membentuk graph payload untuk divisualisasikan di Cytoscape.
   const graph = buildGraphPayload(intent, execution.records);
   logs.push(
     `Graph built successfully: ${graph.nodes.length} nodes, ${graph.edges.length} edges`
