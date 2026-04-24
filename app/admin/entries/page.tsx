@@ -23,6 +23,8 @@ type EntriesResponse = {
   message?: string;
 };
 
+type FieldErrors = Partial<Record<keyof EtymologyEntry, string>>;
+
 const EMPTY_FORM: EtymologyEntry = {
   lemma: "",
   meaning: "",
@@ -36,6 +38,44 @@ const EMPTY_FORM: EtymologyEntry = {
   sourceReference: "",
 };
 
+function sanitizeEntryForm(form: EtymologyEntry): EtymologyEntry {
+  return {
+    ...form,
+    lemma: form.lemma.trim(),
+    meaning: form.meaning.trim(),
+    rootForm: form.rootForm.trim(),
+    originLanguage: form.originLanguage.trim(),
+    gloss: form.gloss.trim(),
+    languageFamily: form.languageFamily.trim(),
+    historicalPeriod: form.historicalPeriod.trim(),
+    notes: form.notes.trim(),
+    sourceReference: form.sourceReference.trim(),
+  };
+}
+
+function validateEntryForm(form: EtymologyEntry): FieldErrors {
+  const sanitized = sanitizeEntryForm(form);
+  const errors: FieldErrors = {};
+
+  if (!sanitized.lemma) {
+    errors.lemma = "Lemma wajib diisi.";
+  }
+
+  if (!sanitized.meaning) {
+    errors.meaning = "Makna kata wajib diisi.";
+  }
+
+  if (!sanitized.rootForm) {
+    errors.rootForm = "Kata asal wajib diisi.";
+  }
+
+  if (!sanitized.originLanguage) {
+    errors.originLanguage = "Bahasa asal wajib diisi.";
+  }
+
+  return errors;
+}
+
 export default function AdminEntriesPage() {
   const [entries, setEntries] = useState<EtymologyEntry[]>([]);
   const [form, setForm] = useState<EtymologyEntry>(EMPTY_FORM);
@@ -44,6 +84,7 @@ export default function AdminEntriesPage() {
   const [fetching, setFetching] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const loadEntries = useCallback(async () => {
     setFetching(true);
@@ -85,11 +126,17 @@ export default function AdminEntriesPage() {
       ...prev,
       [key]: value,
     }));
+
+    setFieldErrors((prev) => ({
+      ...prev,
+      [key]: undefined,
+    }));
   }
 
   function handleEdit(entry: EtymologyEntry) {
     setForm(entry);
     setEditingLemma(entry.lemma);
+    setFieldErrors({});
     setMessage(`Mode edit aktif untuk lemma "${entry.lemma}".`);
     setError(null);
   }
@@ -97,6 +144,7 @@ export default function AdminEntriesPage() {
   function resetForm() {
     setForm(EMPTY_FORM);
     setEditingLemma(null);
+    setFieldErrors({});
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -106,6 +154,15 @@ export default function AdminEntriesPage() {
     setError(null);
 
     try {
+      const sanitizedForm = sanitizeEntryForm(form);
+      const validationErrors = validateEntryForm(sanitizedForm);
+
+      if (Object.keys(validationErrors).length > 0) {
+        setFieldErrors(validationErrors);
+        setError("Masih ada field wajib yang belum valid.");
+        return;
+      }
+
       const isEdit = Boolean(editingLemma);
       const url = isEdit ? `/api/entries/${editingLemma}` : "/api/entries";
       const method = isEdit ? "PUT" : "POST";
@@ -115,7 +172,7 @@ export default function AdminEntriesPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(form),
+        body: JSON.stringify(sanitizedForm),
       });
 
       const data = await response.json();
@@ -126,8 +183,8 @@ export default function AdminEntriesPage() {
 
       setMessage(
         isEdit
-          ? `Entri "${form.lemma}" berhasil diperbarui.`
-          : `Entri "${form.lemma}" berhasil ditambahkan.`
+          ? `Entri "${sanitizedForm.lemma}" berhasil diperbarui.`
+          : `Entri "${sanitizedForm.lemma}" berhasil ditambahkan.`
       );
 
       resetForm();
@@ -232,6 +289,7 @@ export default function AdminEntriesPage() {
                     value={form.lemma}
                     onChange={(value) => updateField("lemma", value)}
                     placeholder="contoh: kantor"
+                    error={fieldErrors.lemma}
                   />
 
                   <InputField
@@ -239,6 +297,7 @@ export default function AdminEntriesPage() {
                     value={form.meaning}
                     onChange={(value) => updateField("meaning", value)}
                     placeholder="contoh: tempat bekerja atau instansi"
+                    error={fieldErrors.meaning}
                   />
 
                   <InputField
@@ -246,6 +305,7 @@ export default function AdminEntriesPage() {
                     value={form.rootForm}
                     onChange={(value) => updateField("rootForm", value)}
                     placeholder="contoh: kantoor"
+                    error={fieldErrors.rootForm}
                   />
 
                   <InputField
@@ -253,6 +313,7 @@ export default function AdminEntriesPage() {
                     value={form.originLanguage}
                     onChange={(value) => updateField("originLanguage", value)}
                     placeholder="contoh: Belanda"
+                    error={fieldErrors.originLanguage}
                   />
 
                   <div>
@@ -433,11 +494,13 @@ function InputField({
   value,
   onChange,
   placeholder,
+  error,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  error?: string;
 }) {
   return (
     <div>
@@ -446,8 +509,13 @@ function InputField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+        className={`w-full rounded-xl border px-4 py-3 text-sm outline-none transition focus:ring-2 ${
+          error
+            ? "border-red-300 focus:border-red-400 focus:ring-red-100"
+            : "border-slate-300 focus:border-slate-500 focus:ring-slate-200"
+        }`}
       />
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </div>
   );
 }

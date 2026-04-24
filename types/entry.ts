@@ -17,6 +17,10 @@ import { z } from "zod";
  * - historicalPeriod
  * - notes
  * - sourceReference
+ *
+ * Catatan:
+ * Field utama menggunakan trim() + min(1)
+ * agar input yang hanya berisi spasi tidak lolos validasi.
  */
 export const RelationTypeSchema = z.enum([
   "DERIVED_FROM",
@@ -25,18 +29,18 @@ export const RelationTypeSchema = z.enum([
 ]);
 
 export const EtymologyEntrySchema = z.object({
-  lemma: z.string().min(1, "Lemma wajib diisi").max(100),
-  meaning: z.string().min(1, "Makna kata wajib diisi").max(300),
+  lemma: z.string().trim().min(1, "Lemma wajib diisi").max(100),
+  meaning: z.string().trim().min(1, "Makna kata wajib diisi").max(300),
 
-  rootForm: z.string().min(1, "Kata asal wajib diisi").max(100),
-  originLanguage: z.string().min(1, "Bahasa asal wajib diisi").max(100),
+  rootForm: z.string().trim().min(1, "Kata asal wajib diisi").max(100),
+  originLanguage: z.string().trim().min(1, "Bahasa asal wajib diisi").max(100),
   relationType: RelationTypeSchema.default("DERIVED_FROM"),
 
-  gloss: z.string().optional().default(""),
-  languageFamily: z.string().optional().default(""),
-  historicalPeriod: z.string().optional().default(""),
-  notes: z.string().optional().default(""),
-  sourceReference: z.string().optional().default(""),
+  gloss: z.string().trim().optional().default(""),
+  languageFamily: z.string().trim().optional().default(""),
+  historicalPeriod: z.string().trim().optional().default(""),
+  notes: z.string().trim().optional().default(""),
+  sourceReference: z.string().trim().optional().default(""),
 });
 
 export type EtymologyEntry = z.infer<typeof EtymologyEntrySchema>;
