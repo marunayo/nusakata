@@ -24,6 +24,7 @@ type EntriesResponse = {
 };
 
 type FieldErrors = Partial<Record<keyof EtymologyEntry, string>>;
+type NoticeType = "success" | "error" | null;
 
 const EMPTY_FORM: EtymologyEntry = {
   lemma: "",
@@ -57,18 +58,9 @@ function validateEntryForm(form: EtymologyEntry): FieldErrors {
   const sanitized = sanitizeEntryForm(form);
   const errors: FieldErrors = {};
 
-  if (!sanitized.lemma) {
-    errors.lemma = "Lemma wajib diisi.";
-  }
-
-  if (!sanitized.meaning) {
-    errors.meaning = "Makna kata wajib diisi.";
-  }
-
-  if (!sanitized.rootForm) {
-    errors.rootForm = "Kata asal wajib diisi.";
-  }
-
+  if (!sanitized.lemma) errors.lemma = "Lemma wajib diisi.";
+  if (!sanitized.meaning) errors.meaning = "Makna kata wajib diisi.";
+  if (!sanitized.rootForm) errors.rootForm = "Kata asal wajib diisi.";
   if (!sanitized.originLanguage) {
     errors.originLanguage = "Bahasa asal wajib diisi.";
   }
@@ -85,6 +77,7 @@ export default function AdminEntriesPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [noticeType, setNoticeType] = useState<NoticeType>(null);
 
   const loadEntries = useCallback(async () => {
     setFetching(true);
@@ -105,6 +98,7 @@ export default function AdminEntriesPage() {
           ? err.message
           : "Terjadi kesalahan saat mengambil data.";
       setError(msg);
+      setNoticeType("error");
     } finally {
       setFetching(false);
     }
@@ -117,6 +111,18 @@ export default function AdminEntriesPage() {
 
     return () => clearTimeout(timer);
   }, [loadEntries]);
+
+  useEffect(() => {
+    if (!message && !error) return;
+
+    const timer = setTimeout(() => {
+      setMessage(null);
+      setError(null);
+      setNoticeType(null);
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [message, error]);
 
   function updateField<K extends keyof EtymologyEntry>(
     key: K,
@@ -138,6 +144,7 @@ export default function AdminEntriesPage() {
     setEditingLemma(entry.lemma);
     setFieldErrors({});
     setMessage(`Mode edit aktif untuk lemma "${entry.lemma}".`);
+    setNoticeType("success");
     setError(null);
   }
 
@@ -152,6 +159,7 @@ export default function AdminEntriesPage() {
     setLoading(true);
     setMessage(null);
     setError(null);
+    setNoticeType(null);
 
     try {
       const sanitizedForm = sanitizeEntryForm(form);
@@ -159,7 +167,8 @@ export default function AdminEntriesPage() {
 
       if (Object.keys(validationErrors).length > 0) {
         setFieldErrors(validationErrors);
-        setError("Masih ada field wajib yang belum valid.");
+        setError("Form gagal disimpan. Periksa field yang wajib diisi.");
+        setNoticeType("error");
         return;
       }
 
@@ -183,9 +192,10 @@ export default function AdminEntriesPage() {
 
       setMessage(
         isEdit
-          ? `Entri "${sanitizedForm.lemma}" berhasil diperbarui.`
-          : `Entri "${sanitizedForm.lemma}" berhasil ditambahkan.`
+          ? `Berhasil memperbarui entri "${sanitizedForm.lemma}".`
+          : `Berhasil menambahkan entri "${sanitizedForm.lemma}".`
       );
+      setNoticeType("success");
 
       resetForm();
       await loadEntries();
@@ -195,6 +205,7 @@ export default function AdminEntriesPage() {
           ? err.message
           : "Terjadi kesalahan saat menyimpan data.";
       setError(msg);
+      setNoticeType("error");
     } finally {
       setLoading(false);
     }
@@ -210,6 +221,7 @@ export default function AdminEntriesPage() {
     setLoading(true);
     setMessage(null);
     setError(null);
+    setNoticeType(null);
 
     try {
       const response = await fetch(`/api/entries/${lemma}`, {
@@ -226,7 +238,8 @@ export default function AdminEntriesPage() {
         resetForm();
       }
 
-      setMessage(`Entri "${lemma}" berhasil dihapus.`);
+      setMessage(`Berhasil menghapus entri "${lemma}".`);
+      setNoticeType("success");
       await loadEntries();
     } catch (err) {
       const msg =
@@ -234,6 +247,7 @@ export default function AdminEntriesPage() {
           ? err.message
           : "Terjadi kesalahan saat menghapus data.";
       setError(msg);
+      setNoticeType("error");
     } finally {
       setLoading(false);
     }
@@ -251,18 +265,18 @@ export default function AdminEntriesPage() {
           </p>
         </div>
 
-        {(message || error) && (
-          <div className="mb-6 space-y-3">
-            {message && (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-                {message}
-              </div>
-            )}
-            {error && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                {error}
-              </div>
-            )}
+        {noticeType && (message || error) && (
+          <div
+            className={`mb-6 rounded-2xl border p-4 text-sm ${
+              noticeType === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-red-200 bg-red-50 text-red-700"
+            }`}
+          >
+            <div className="font-semibold">
+              {noticeType === "success" ? "Berhasil" : "Gagal"}
+            </div>
+            <div className="mt-1">{noticeType === "success" ? message : error}</div>
           </div>
         )}
 
@@ -484,6 +498,25 @@ export default function AdminEntriesPage() {
             )}
           </section>
         </div>
+
+        {noticeType && (message || error) && (
+          <div className="fixed bottom-5 right-5 z-50">
+            <div
+              className={`min-w-70 rounded-2xl border px-4 py-3 shadow-lg ${
+                noticeType === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
+              <div className="text-sm font-semibold">
+                {noticeType === "success" ? "Berhasil" : "Gagal"}
+              </div>
+              <div className="mt-1 text-sm">
+                {noticeType === "success" ? message : error}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );
